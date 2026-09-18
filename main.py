@@ -1,14 +1,41 @@
 import base64
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from cryptography.hazmat.primitives import serialization
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
+from ai_lining.dashboard import (
+    DashboardDataSource,
+    MockDashboardDataSource,
+    apply_insight,
+    build_dashboard,
+    record_alert_action,
+)
+from ai_lining.models import (
+    Alert,
+    AlertActionRequest,
+    ApplyInsightRequest,
+    ChatCard,
+    DailyObservation,
+    Header,
+    Insight,
+    MyStock,
+    SalesPerformance,
+    WatchedProduct,
+    WhatsHappening,
+)
 from encryption.rsa_crypto import decrypt_rsa, encrypt_rsa, generate_rsa_keys
 from setup.model_provider import create_model_client, setup_openrouter
 
 app = FastAPI(title="Duka AI Engine")
+
+_dashboard_data_source = MockDashboardDataSource()
+
+
+def get_dashboard_data_source() -> DashboardDataSource:
+    """Return the `DashboardDataSource` used to serve the AI Lining dashboard routes."""
+    return _dashboard_data_source
 
 
 class OpenRouterRequest(BaseModel):
@@ -101,3 +128,98 @@ def chat(request: ChatRequest) -> dict[str, str]:
     parent_agent = ParentAgent(build_stage_advisor_agents(model_client))
     response = parent_agent.handle(request.prompt, request.level)
     return {"agent": parent_agent.pick_agent(request.level).name, "response": response}
+
+
+@app.get("/ai-lining/{user_id}/dashboard")
+def get_ai_lining_dashboard(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> dict[str, object]:
+    dashboard = build_dashboard(user_id, data_source)
+    return dashboard.model_dump(by_alias=True)
+
+
+@app.get("/ai-lining/{user_id}/header")
+def get_header(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> Header:
+    return data_source.get_header(user_id)
+
+
+@app.get("/ai-lining/{user_id}/daily-observation")
+def get_daily_observation(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> DailyObservation:
+    return data_source.get_daily_observation(user_id)
+
+
+@app.get("/ai-lining/{user_id}/watched-product")
+def get_watched_product(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> WatchedProduct:
+    return data_source.get_watched_product(user_id)
+
+
+@app.get("/ai-lining/{user_id}/alert")
+def get_alert(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> Alert | None:
+    return data_source.get_alert(user_id)
+
+
+@app.get("/ai-lining/{user_id}/whats-happening")
+def get_whats_happening(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> WhatsHappening:
+    return data_source.get_whats_happening(user_id)
+
+
+@app.get("/ai-lining/{user_id}/insights")
+def get_insights(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> list[Insight]:
+    return data_source.get_insights(user_id)
+
+
+@app.post("/ai-lining/{user_id}/insights/apply")
+def post_apply_insight(
+    user_id: str,
+    request: ApplyInsightRequest,
+    data_source: DashboardDataSource = Depends(get_dashboard_data_source),
+) -> dict[str, object]:
+    success, message = apply_insight(user_id, request.insight_id, data_source)
+    if not success:
+        raise HTTPException(status_code=404, detail=message)
+    return {"success": True, "message": message}
+
+
+@app.get("/ai-lining/{user_id}/sales-performance")
+def get_sales_performance(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> SalesPerformance:
+    return data_source.get_sales_performance(user_id)
+
+
+@app.get("/ai-lining/{user_id}/my-stock")
+def get_my_stock(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> MyStock:
+    return data_source.get_my_stock(user_id)
+
+
+@app.get("/ai-lining/{user_id}/chat-card")
+def get_chat_card(
+    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> ChatCard:
+    return data_source.get_chat_card(user_id)
+
+
+@app.post("/ai-lining/{user_id}/alerts/action")
+def post_alert_action(
+    user_id: str,
+    request: AlertActionRequest,
+    data_source: DashboardDataSource = Depends(get_dashboard_data_source),
+) -> dict[str, object]:
+    success, message = record_alert_action(user_id, request.alert_id, data_source)
+    if not success:
+        raise HTTPException(status_code=404, detail=message)
+    return {"success": True, "message": message}
