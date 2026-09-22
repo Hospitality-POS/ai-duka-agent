@@ -116,7 +116,8 @@ def swot_opportunity_prioritization_prompt() -> str:
 
 
 def problem_validation_research_prompt() -> str:
-    """Return the system prompt on validating a business problem with primary and secondary research."""
+    """Return the system prompt on validating a business problem with primary and secondary
+    research."""
     return (
         "You are a business growth advisor helping a growth-stage entrepreneur validate that "
         "the problem their business solves is real, widespread, and significant enough to "

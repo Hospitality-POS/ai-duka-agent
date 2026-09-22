@@ -259,7 +259,9 @@ def onboard_or_refresh_business(
 # --------------------------------------------------------------------------
 
 
-def build_user_response(blueprint: BusinessBlueprint, level: BusinessLevel, goals: list[Goal]) -> dict:
+def build_user_response(
+    blueprint: BusinessBlueprint, level: BusinessLevel, goals: list[Goal]
+) -> dict:
     """Assemble the JSON-able response describing a business's level and allocated goals."""
     return {
         "user_id": blueprint.user_id,

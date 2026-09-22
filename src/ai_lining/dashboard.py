@@ -41,7 +41,7 @@ class DashboardDataSource(Protocol):
 
 
 class MockDashboardDataSource:
-    """A `DashboardDataSource` backed by static example data, for use before the real integration exists."""
+    """A `DashboardDataSource` backed by static example data before the real integration exists."""
 
     def get_header(self, user_id: str) -> Header:
         """Return a placeholder header for `user_id`."""
@@ -191,7 +191,9 @@ def build_dashboard(user_id: str, data_source: DashboardDataSource) -> AiLiningD
     )
 
 
-def apply_insight(user_id: str, insight_id: str, data_source: DashboardDataSource) -> tuple[bool, str]:
+def apply_insight(
+    user_id: str, insight_id: str, data_source: DashboardDataSource
+) -> tuple[bool, str]:
     """Apply `insight_id` for `user_id` and report whether it succeeded."""
     insight_ids = {insight.id for insight in data_source.get_insights(user_id)}
     if insight_id not in insight_ids:
@@ -202,7 +204,9 @@ def apply_insight(user_id: str, insight_id: str, data_source: DashboardDataSourc
     return False, "Failed to apply insight."
 
 
-def record_alert_action(user_id: str, alert_id: str, data_source: DashboardDataSource) -> tuple[bool, str]:
+def record_alert_action(
+    user_id: str, alert_id: str, data_source: DashboardDataSource
+) -> tuple[bool, str]:
     """Record that `user_id` acted on `alert_id` and report whether it succeeded."""
     alert = data_source.get_alert(user_id)
     if alert is None or alert.id != alert_id:

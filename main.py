@@ -97,7 +97,9 @@ def encrypt_rsa_payload(request: RSAEncryptRequest) -> dict[str, str]:
 @app.post("/rsa/decrypt")
 def decrypt_rsa_payload(request: RSADecryptRequest) -> dict[str, str]:
     try:
-        private_key = serialization.load_pem_private_key(request.private_key_pem.encode("utf-8"), password=None)
+        private_key = serialization.load_pem_private_key(
+            request.private_key_pem.encode("utf-8"), password=None
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid private key: {exc}") from exc
 
