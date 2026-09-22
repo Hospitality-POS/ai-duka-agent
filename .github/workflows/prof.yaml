@@ -11,6 +11,7 @@ env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/ai-duka-agent
 
 permissions:
+  actions: write
   contents: read
 
 jobs:
