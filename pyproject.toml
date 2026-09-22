@@ -36,6 +36,12 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# BLE001: this repo's convention is to catch Exception at integration boundaries,
+# tagged "# pragma: no cover - defensive branch" (see CLAUDE.md).
+# FLY002: misfires on joins of function-call results, not string literals.
+ignore = ["BLE001", "FLY002"]
+
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]
 

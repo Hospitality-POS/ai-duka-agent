@@ -25,7 +25,6 @@ from typing import Protocol
 
 from encryption.rsa_crypto import encrypt_rsa
 
-
 # --------------------------------------------------------------------------
 # Data shapes
 # --------------------------------------------------------------------------
@@ -45,7 +44,7 @@ class BusinessBlueprint:
     day_summary: dict | None = None
     onboarding_answers: dict[str, str] | None = None
     business_age_years: int | None = None
-    digital_instance: "BusinessDigitalInstance | None" = None
+    digital_instance: BusinessDigitalInstance | None = None
 
 
 @dataclass
