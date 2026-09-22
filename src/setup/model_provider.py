@@ -28,7 +28,9 @@ def setup_openrouter(
         return False, f"An error occurred while setting up OpenRouter: {exc}"
 
 
-def setup_gemini(api_key: str | None = None, env_var_name: str = "GEMINI_API_KEY") -> tuple[bool, str]:
+def setup_gemini(
+    api_key: str | None = None, env_var_name: str = "GEMINI_API_KEY"
+) -> tuple[bool, str]:
     """Validate a Gemini API key and confirm the client can generate content."""
     resolved_key = api_key or os.getenv(env_var_name)
     if not resolved_key:

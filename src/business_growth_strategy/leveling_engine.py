@@ -76,7 +76,9 @@ def classify_by_age(business_age_years: int) -> str:
 
 def build_goal_allocation_prompt(blueprint: BusinessBlueprint, level: BusinessLevel) -> str:
     """Compose the prompt asking the model for SMART goals fitting this business's stage."""
-    narrative = blueprint.digital_instance.narrative if blueprint.digital_instance else "unavailable"
+    narrative = (
+        blueprint.digital_instance.narrative if blueprint.digital_instance else "unavailable"
+    )
     return (
         f"{level.target['system_prompt']}\n\n"
         f"Business narrative: {narrative}\n"
