@@ -1,4 +1,5 @@
 import base64
+import os
 
 from cryptography.hazmat.primitives import serialization
 from fastapi import Depends, FastAPI, HTTPException
@@ -8,6 +9,7 @@ from agents.parent_agent import ParentAgent, build_stage_advisor_agents
 from ai_lining.dashboard import (
     DashboardDataSource,
     MockDashboardDataSource,
+    RealDashboardDataSource,
     apply_insight,
     build_dashboard,
     record_alert_action,
@@ -27,10 +29,23 @@ from ai_lining.models import (
 )
 from encryption.rsa_crypto import decrypt_rsa, encrypt_rsa, generate_rsa_keys
 from setup.model_provider import create_model_client, setup_openrouter
+from setup.parent_backend import BasePointParentBackendClient
 
 app = FastAPI(title="Duka AI Engine")
 
-_dashboard_data_source = MockDashboardDataSource()
+
+def _build_dashboard_data_source() -> DashboardDataSource:
+    """Use the real Parent Backend Engine once its and a model provider's keys are set."""
+    if not os.getenv("PARENT_BACKEND_API_KEY"):
+        return MockDashboardDataSource()
+    try:
+        model_client = create_model_client("gemini")
+    except ValueError:
+        return MockDashboardDataSource()
+    return RealDashboardDataSource(BasePointParentBackendClient(), model_client)
+
+
+_dashboard_data_source = _build_dashboard_data_source()
 
 
 def get_dashboard_data_source() -> DashboardDataSource:

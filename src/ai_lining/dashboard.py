@@ -1,15 +1,20 @@
 """Assembles the AI Lining dashboard for a user, one function per widget section.
 
-`DashboardDataSource` is the Parent Backend Engine's dashboard API - it doesn't exist yet
-(see `setup/business_identity.py` for the same pattern), so `MockDashboardDataSource` stands
-in with static example data until that integration lands. Swap it out at the FastAPI
-dependency in `main.py` once a real client exists; nothing here makes network calls.
+`MockDashboardDataSource` returns static example data. `RealDashboardDataSource` computes
+`dailyObservation`, `watchedProduct`, `alert`, and `insights` from the real Parent Backend
+Engine (see `setup/parent_backend.py`) - `header`, `whatsHappening`, `salesPerformance`, and
+`myStock` still have no real data source (no shop-listing endpoint, no historical stock
+snapshots, no confirmed product cost field) and fall back to the mock values.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
+from ai_lining.analytics import compute_daily_observation, compute_watched_product
+from ai_lining.insight_generation import generate_insights
 from ai_lining.models import (
     AiLiningDashboard,
     Alert,
@@ -22,6 +27,8 @@ from ai_lining.models import (
     WatchedProduct,
     WhatsHappening,
 )
+from setup.business_identity import ChatModelClient
+from setup.parent_backend import BasePointParentBackendClient
 
 
 class DashboardDataSource(Protocol):
@@ -174,6 +181,77 @@ class MockDashboardDataSource:
     def record_alert_action(self, user_id: str, alert_id: str) -> bool:
         """Record that `user_id` opened `alert_id`'s suggested action; the mock always succeeds."""
         return True
+
+
+class RealDashboardDataSource(MockDashboardDataSource):
+    """A `DashboardDataSource` computing what it can from the real Parent Backend Engine.
+
+    `user_id` is treated as the shop_id `BasePointParentBackendClient.list_orders` expects.
+    Sections with no real data source yet (`header`, `whatsHappening`, `salesPerformance`,
+    `myStock`) fall back to `MockDashboardDataSource`.
+    """
+
+    def __init__(
+        self,
+        parent_backend: BasePointParentBackendClient,
+        model_client: ChatModelClient,
+        velocity_window_days: int = 7,
+        stock_threshold_days: float = 2.0,
+    ) -> None:
+        self._parent_backend = parent_backend
+        self._model_client = model_client
+        self._velocity_window_days = velocity_window_days
+        self._stock_threshold_days = stock_threshold_days
+
+    def _recent_orders(self, user_id: str, days: int) -> list[dict]:
+        """Fetch `user_id`'s orders from `days` ago through today, in East Africa Time."""
+        today = datetime.now(ZoneInfo("Africa/Nairobi")).date()
+        start = (today - timedelta(days=days)).isoformat()
+        return self._parent_backend.list_orders(user_id, start, today.isoformat())
+
+    def _watched_product_and_alert(self, user_id: str) -> tuple[WatchedProduct, Alert | None]:
+        recent_orders = self._recent_orders(user_id, self._velocity_window_days)
+        catalog = self._parent_backend.get_catalog(user_id)
+        product_names = {product["_id"]: product.get("name", "") for product in catalog}
+
+        stock_levels = self._parent_backend.get_stock_levels(user_id)
+        stock_by_product = {
+            item["product_id"]: item.get("quantity", 0)
+            for item in stock_levels[0]["inventory"]
+        }
+
+        return compute_watched_product(
+            recent_orders,
+            stock_by_product,
+            product_names,
+            self._velocity_window_days,
+            self._stock_threshold_days,
+        )
+
+    def get_daily_observation(self, user_id: str) -> DailyObservation:
+        """Compute today's hourly sales, compared against yesterday, from real orders."""
+        orders_today = self._recent_orders(user_id, 0)
+        orders_yesterday_through_today = self._recent_orders(user_id, 1)
+        orders_yesterday = [
+            order for order in orders_yesterday_through_today if order not in orders_today
+        ]
+        return compute_daily_observation(orders_today, orders_yesterday)
+
+    def get_watched_product(self, user_id: str) -> WatchedProduct:
+        """Return the highest-velocity product from real orders and stock."""
+        watched_product, _alert = self._watched_product_and_alert(user_id)
+        return watched_product
+
+    def get_alert(self, user_id: str) -> Alert | None:
+        """Return a low-stock alert if the watched product is within the days-of-stock threshold."""
+        _watched_product, alert = self._watched_product_and_alert(user_id)
+        return alert
+
+    def get_insights(self, user_id: str) -> list[Insight]:
+        """Generate insights from the real watched product and daily observation."""
+        watched_product = self.get_watched_product(user_id)
+        daily_observation = self.get_daily_observation(user_id)
+        return generate_insights(self._model_client, watched_product, daily_observation)
 
 
 def build_dashboard(user_id: str, data_source: DashboardDataSource) -> AiLiningDashboard:
