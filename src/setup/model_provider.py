@@ -1,13 +1,24 @@
 # we will need to integrate with two models: Gemini and OpenRouter.
 
+import logging
 import os
 
 from google import genai
+from google.genai.errors import ServerError
 from openrouter import OpenRouter
+
+logger = logging.getLogger(__name__)
 
 # Env vars hold the actual keys; never hardcode a key here.
 DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL_VERSION", "gemini-3.7-flash")
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
+
+# Models to try, in order, when the primary Gemini model returns a 503 (e.g. "high demand").
+GEMINI_FALLBACK_MODELS = [
+    m.strip()
+    for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.8-flash").split(",")
+    if m.strip()
+]
 
 
 def setup_openrouter(
@@ -68,14 +79,29 @@ class OpenRouterChatClient:
 class GeminiChatClient:
     """A `ChatModelClient` (see `setup/business_identity.py`) backed by the Google Gemini API."""
 
-    def __init__(self, api_key: str, model: str = DEFAULT_GEMINI_MODEL) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_GEMINI_MODEL,
+        fallback_models: list[str] | None = None,
+    ) -> None:
         self._client = genai.Client(api_key=api_key)
         self._model = model
+        self._fallback_models = (
+            GEMINI_FALLBACK_MODELS if fallback_models is None else fallback_models
+        )
 
     def complete(self, prompt: str) -> str:
-        """Send a prompt to Gemini and return the generated text."""
-        response = self._client.models.generate_content(model=self._model, contents=prompt)
-        return response.text
+        """Send a prompt to Gemini, falling back to other models if one is unavailable."""
+        last_error: ServerError | None = None
+        for model in (self._model, *self._fallback_models):
+            try:
+                response = self._client.models.generate_content(model=model, contents=prompt)
+                return response.text
+            except ServerError as exc:  # pragma: no cover - defensive branch
+                logger.warning("Gemini model %r unavailable, trying next fallback: %s", model, exc)
+                last_error = exc
+        raise last_error
 
 
 MODEL_CLIENTS = {
