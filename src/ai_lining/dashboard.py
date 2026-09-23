@@ -216,8 +216,7 @@ class RealDashboardDataSource(MockDashboardDataSource):
 
         stock_levels = self._parent_backend.get_stock_levels(user_id)
         stock_by_product = {
-            item["product_id"]: item.get("quantity", 0)
-            for item in stock_levels[0]["inventory"]
+            item["_id"]: item.get("quantity", 0) for item in stock_levels[0]["inventory"]
         }
 
         return compute_watched_product(

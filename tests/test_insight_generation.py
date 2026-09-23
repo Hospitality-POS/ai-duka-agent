@@ -16,13 +16,17 @@ class _StubModelClient:
 def _sample_metrics():
     orders = [
         {
-            "created_at": "2026-01-15T07:00:00",
-            "line_items": [{"product_id": "prod1", "quantity": 2, "unit_price": 500}],
+            "createdAt": "2026-01-15T07:00:00.000+03:00",
+            "line_items": [
+                {
+                    "product_id": {"_id": "prod1", "name": "Morning Coffee"},
+                    "quantity": 2,
+                    "price": 500,
+                }
+            ],
         }
     ]
-    watched_product, _alert = compute_watched_product(
-        orders, {"prod1": 10}, {"prod1": "Morning Coffee"}, 1, 2.0
-    )
+    watched_product, _alert = compute_watched_product(orders, {"prod1": 10}, {}, 1, 2.0)
     daily_observation = compute_daily_observation(orders, [])
     return watched_product, daily_observation
 

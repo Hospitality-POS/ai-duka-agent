@@ -8,13 +8,19 @@ class _StubParentBackend:
     def list_orders(self, user_id: str, start_date: str, end_date: str) -> list[dict]:
         return [
             {
-                "created_at": "2026-01-15T07:00:00",
-                "line_items": [{"product_id": "prod1", "quantity": 2, "unit_price": 500}],
+                "createdAt": "2026-01-15T07:00:00.000+03:00",
+                "line_items": [
+                    {
+                        "product_id": {"_id": "prod1", "name": "Morning Coffee"},
+                        "quantity": 2,
+                        "price": 500,
+                    }
+                ],
             }
         ]
 
     def get_stock_levels(self, user_id: str) -> list[dict]:
-        return [{"inventory": [{"product_id": "prod1", "quantity": 2}], "deliveries": [], "orders": []}]
+        return [{"inventory": [{"_id": "prod1", "quantity": 2}], "deliveries": [], "orders": []}]
 
 
 class _StubModelClient:

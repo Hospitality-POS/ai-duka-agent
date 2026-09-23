@@ -6,11 +6,11 @@ from setup.parent_backend import BasePointParentBackendClient
 CATALOG_RESPONSES = {
     "/product/products/getproducts/all": [
         {
-            "category_path": "Beverages",
+            "name": "Beverages",
             "products": [{"_id": "prod1", "name": "Morning Coffee"}],
         }
     ],
-    "/product-inventory": [{"product_id": "prod1", "unit_id": "unit1", "quantity": 42}],
+    "/product-inventory": [{"_id": "prod1", "unit_id": "unit1", "quantity": 42}],
 }
 
 
@@ -63,18 +63,20 @@ def test_list_orders_flattens_line_items_and_payments() -> None:
 
 def test_list_procurement_adds_outstanding_quantity() -> None:
     routes = {
-        "/purchase-orders": [{"_id": "po1", "items": [{"quantity": 100}]}],
-        "/delivery": [{"purchase_order_id": "po1", "quantity": 60}],
+        "/purchase-orders": [
+            {"_id": "po1", "po_items": [{"quantity_ordered": 100, "quantity_received": 60}]}
+        ],
+        "/delivery": [{"purchase_order_id": {"_id": "po1"}, "delivery_items": [{"quantity": 60}]}],
     }
     client = _client_with_routes(routes)
     procurement = client.list_procurement("shop1")
     assert procurement[0]["outstanding_qty"] == 40
-    assert procurement[0]["deliveries"] == [{"purchase_order_id": "po1", "quantity": 60}]
+    assert procurement[0]["deliveries"] == routes["/delivery"]
 
 
 def test_get_stock_levels_composes_inventory_deliveries_and_orders() -> None:
     routes = {
-        "/product-inventory": [{"product_id": "prod1", "quantity": 42}],
+        "/product-inventory": [{"_id": "prod1", "quantity": 42}],
         "/delivery": [{"_id": "del1"}],
         "/orders": [{"_id": "ord1"}],
     }
@@ -82,7 +84,7 @@ def test_get_stock_levels_composes_inventory_deliveries_and_orders() -> None:
     stock_levels = client.get_stock_levels("shop1")
     assert stock_levels == [
         {
-            "inventory": [{"product_id": "prod1", "quantity": 42}],
+            "inventory": [{"_id": "prod1", "quantity": 42}],
             "deliveries": [{"_id": "del1"}],
             "orders": [{"_id": "ord1"}],
         }
