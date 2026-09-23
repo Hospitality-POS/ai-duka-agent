@@ -6,7 +6,7 @@ from google import genai
 from openrouter import OpenRouter
 
 # Env vars hold the actual keys; never hardcode a key here.
-DEFAULT_GEMINI_MODEL = "gemini-3.7-flash"
+DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL_VERSION", "gemini-3.7-flash")
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
 
 
