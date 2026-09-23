@@ -9,9 +9,39 @@ every route takes `user_id` as a path parameter and returns that user's data.
 
 ## Data source note
 
-Every route currently reads from `MockDashboardDataSource` (`src/ai_lining/dashboard.py`) —
-static example data standing in for the Parent Backend Engine, which doesn't exist yet.
-Response shapes won't change when that integration lands, only the values.
+The response **shape is unchanged and final** — `fromJson` doesn't need to change. What's
+changed is where the values come from, and this matters for how the app should behave:
+
+| Section | Backed by |
+|---|---|
+| `dailyObservation` | **Real** — today's orders vs. yesterday's, bucketed hourly |
+| `watchedProduct` | **Real** — highest sales-velocity product over the last 7 days |
+| `alert` | **Real** — fires when the watched product's days-of-stock ≤ 2 |
+| `insights` | **Real** — generated per request by an LLM (Gemini/OpenRouter) from the two sections above |
+| `header`, `whatsHappening`, `salesPerformance`, `myStock` | **Still mock** — no shop-listing, historical-stock, or cost-field data source exists yet on the Parent Backend |
+| `chat` | Static, unlikely to ever be dynamic |
+
+This only applies once the backend has `PARENT_BACKEND_API_KEY` (and a model-provider key)
+configured — with neither set, every section falls back to the old static mock, exactly as
+before. Both states return `200` with the same JSON shape, so there's no client-side flag
+to check; you just may see the four "real" sections start reflecting the shop's actual
+numbers on shops with order history.
+
+### What "real" changes for the client
+
+- **`user_id` in the path must be the shop's real BasePoint `_id`** (a Mongo ObjectId
+  string, e.g. `67841c7f52c7b8888375503b`), not an app-internal user id — `list_orders`,
+  `get_catalog`, etc. are all called with it as `shop_id`. Passing the wrong id won't
+  error; it'll just return data for whichever shop that id happens to match, or empty/zero
+  values if it matches nothing.
+- **A shop with no orders in the last day/week isn't an error.** `dailyObservation` will
+  come back as all-zero buckets, and `watchedProduct`/`alert` will reflect whatever
+  historical orders exist. Don't treat all-zero as a loading/error state.
+- **`insights` now costs a real LLM call per dashboard load.** Expect `/dashboard` and
+  `/insights` to be noticeably slower (and occasionally to return the fallback insight
+  `"Insights are temporarily unavailable - check back shortly."` if the model call fails)
+  than they were against the static mock. If the dashboard has a loading skeleton, keep it
+  — this is no longer an instant response.
 
 ## Endpoints
 
@@ -122,9 +152,10 @@ not call back to the API.
 ## Error handling
 
 All endpoints return standard FastAPI error bodies: `{"detail": "<message>"}`. Section
-GET routes don't currently 404 on unknown `user_id` — they always return the mock data.
-Once real data replaces the mock, add a check for empty/missing user data on the client
-before treating a 200 as "this user has a dashboard."
+GET routes don't 404 on an unknown/wrong `user_id` — with the mock data source they return
+the same static values regardless of id; with the real data source, a bad shop id returns
+`200` with empty/zero values (see above) rather than a 404. Don't treat a `200` alone as
+confirmation the shop id you passed was valid.
 
 ## Known gap to fix alongside this
 
