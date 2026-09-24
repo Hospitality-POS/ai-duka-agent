@@ -3,7 +3,7 @@ import os
 
 from cryptography.hazmat.primitives import serialization
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
 from ai_lining.dashboard import (
@@ -59,10 +59,12 @@ class OpenRouterRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     prompt: str
     level: str | None = None
     provider: str = "gemini"
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, alias="apiKey")
     model: str | None = None
 
 

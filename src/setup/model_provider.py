@@ -1,10 +1,10 @@
-# we will need to integrate with two models: Gemini and OpenRouter.
-
 import logging
 import os
 
+import anthropic
 from google import genai
 from google.genai.errors import ServerError
+from openai import OpenAI
 from openrouter import OpenRouter
 
 logger = logging.getLogger(__name__)
@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 # Env vars hold the actual keys; never hardcode a key here.
 DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL_VERSION", "gemini-3.7-flash")
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+ANTHROPIC_MAX_TOKENS = 1024
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 # Models to try, in order, when the primary Gemini model returns a 503 (e.g. "high demand").
 GEMINI_FALLBACK_MODELS = [
@@ -104,20 +109,81 @@ class GeminiChatClient:
         raise last_error
 
 
+class OpenAIChatClient:
+    """A `ChatModelClient` (see `setup/business_identity.py`) backed by the OpenAI API."""
+
+    def __init__(self, api_key: str, model: str = DEFAULT_OPENAI_MODEL) -> None:
+        self._client = OpenAI(api_key=api_key)
+        self._model = model
+
+    def complete(self, prompt: str) -> str:
+        """Send a prompt to OpenAI and return the completion text."""
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content
+
+
+class DeepSeekChatClient:
+    """A `ChatModelClient` (see `setup/business_identity.py`) backed by the DeepSeek API."""
+
+    def __init__(self, api_key: str, model: str = DEFAULT_DEEPSEEK_MODEL) -> None:
+        self._client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+        self._model = model
+
+    def complete(self, prompt: str) -> str:
+        """Send a prompt to DeepSeek and return the completion text."""
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content
+
+
+class AnthropicChatClient:
+    """A `ChatModelClient` (see `setup/business_identity.py`) backed by the Anthropic API."""
+
+    def __init__(self, api_key: str, model: str = DEFAULT_ANTHROPIC_MODEL) -> None:
+        self._client = anthropic.Anthropic(api_key=api_key)
+        self._model = model
+
+    def complete(self, prompt: str) -> str:
+        """Send a prompt to Anthropic and return the completion text."""
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=ANTHROPIC_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+
+
 MODEL_CLIENTS = {
     "openrouter": OpenRouterChatClient,
     "gemini": GeminiChatClient,
+    "openai": OpenAIChatClient,
+    "deepseek": DeepSeekChatClient,
+    "anthropic": AnthropicChatClient,
 }
 
 PROVIDER_ENV_VARS = {
     "openrouter": "OPENROUTER_API_KEY",
     "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
 }
 
 
 def create_model_client(
     provider: str, api_key: str | None = None, model: str | None = None
-) -> OpenRouterChatClient | GeminiChatClient:
+) -> (
+    OpenRouterChatClient
+    | GeminiChatClient
+    | OpenAIChatClient
+    | DeepSeekChatClient
+    | AnthropicChatClient
+):
     """Build a `ChatModelClient` for the given provider, so callers can switch models at will."""
     try:
         client_cls = MODEL_CLIENTS[provider]
