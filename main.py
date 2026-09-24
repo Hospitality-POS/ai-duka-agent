@@ -1,11 +1,11 @@
 import base64
-import os
 
 from cryptography.hazmat.primitives import serialization
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
+from ai_lining.chat_tools import build_dashboard_tools
 from ai_lining.dashboard import (
     DashboardDataSource,
     MockDashboardDataSource,
@@ -28,29 +28,40 @@ from ai_lining.models import (
     WhatsHappening,
 )
 from encryption.rsa_crypto import decrypt_rsa, encrypt_rsa, generate_rsa_keys
+from setup.business_identity import ChatModelClient
 from setup.model_provider import create_model_client, setup_openrouter
 from setup.parent_backend import BasePointParentBackendClient
 
 app = FastAPI(title="Duka AI Engine")
 
 
-def _build_dashboard_data_source() -> DashboardDataSource:
-    """Use the real Parent Backend Engine once its and a model provider's keys are set."""
-    if not os.getenv("PARENT_BACKEND_API_KEY"):
-        return MockDashboardDataSource()
+def _bearer_token(request: Request) -> str | None:
+    """Extract the caller's own Parent Backend token from an `Authorization: Bearer` header."""
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token if scheme.lower() == "bearer" and token else None
+
+
+def _build_insight_model_client() -> ChatModelClient | None:
+    """Build the Gemini model client AI Lining uses to generate insights, once, at startup."""
     try:
-        model_client = create_model_client("gemini")
+        return create_model_client("gemini")
     except ValueError:
+        return None
+
+
+_insight_model_client = _build_insight_model_client()
+
+
+def get_dashboard_data_source(request: Request) -> DashboardDataSource:
+    """Build a `DashboardDataSource` authenticated with the caller's own bearer token.
+
+    Auth sessions are the frontend's job: each request supplies its own Parent Backend
+    token, so no server-side credential is stored or shared across users.
+    """
+    token = _bearer_token(request)
+    if not token or _insight_model_client is None:
         return MockDashboardDataSource()
-    return RealDashboardDataSource(BasePointParentBackendClient(), model_client)
-
-
-_dashboard_data_source = _build_dashboard_data_source()
-
-
-def get_dashboard_data_source() -> DashboardDataSource:
-    """Return the `DashboardDataSource` used to serve the AI Lining dashboard routes."""
-    return _dashboard_data_source
+    return RealDashboardDataSource(BasePointParentBackendClient(api_key=token), _insight_model_client)
 
 
 class OpenRouterRequest(BaseModel):
@@ -66,6 +77,7 @@ class ChatRequest(BaseModel):
     provider: str = "gemini"
     api_key: str | None = Field(default=None, alias="apiKey")
     model: str | None = None
+    user_id: str | None = Field(default=None, alias="userId")
 
 
 class RSAEncryptRequest(BaseModel):
@@ -138,9 +150,17 @@ def openrouter_setup(request: OpenRouterRequest) -> dict[str, object]:
 
 
 @app.post("/chat")
-def chat(request: ChatRequest) -> dict[str, str]:
+def chat(
+    request: ChatRequest, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+) -> dict[str, str]:
+    tools = None
+    if request.provider == "gemini" and request.user_id:
+        tools = build_dashboard_tools(request.user_id, data_source)
+
     try:
-        model_client = create_model_client(request.provider, request.api_key, request.model)
+        model_client = create_model_client(
+            request.provider, request.api_key, request.model, tools=tools
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

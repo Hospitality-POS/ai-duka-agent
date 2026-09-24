@@ -1,9 +1,11 @@
 import logging
 import os
+from collections.abc import Callable
 
 import anthropic
 from google import genai
-from google.genai.errors import ServerError
+from google.genai import types
+from google.genai.errors import ClientError, ServerError
 from openai import OpenAI
 from openrouter import OpenRouter
 
@@ -19,9 +21,13 @@ ANTHROPIC_MAX_TOKENS = 1024
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 # Models to try, in order, when the primary Gemini model returns a 503 (e.g. "high demand").
+# gemini-2.5-flash is last: an older, more established tier less likely to share the same
+# capacity crunch as the 3.x flash models.
 GEMINI_FALLBACK_MODELS = [
     m.strip()
-    for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.8-flash").split(",")
+    for m in os.getenv(
+        "GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.8-flash,gemini-2.5-flash"
+    ).split(",")
     if m.strip()
 ]
 
@@ -89,24 +95,35 @@ class GeminiChatClient:
         api_key: str,
         model: str = DEFAULT_GEMINI_MODEL,
         fallback_models: list[str] | None = None,
+        tools: list[Callable] | None = None,
     ) -> None:
         self._client = genai.Client(api_key=api_key)
         self._model = model
         self._fallback_models = (
             GEMINI_FALLBACK_MODELS if fallback_models is None else fallback_models
         )
+        self._config = types.GenerateContentConfig(tools=tools) if tools else None
 
     def complete(self, prompt: str) -> str:
         """Send a prompt to Gemini, falling back to other models if one is unavailable."""
-        last_error: ServerError | None = None
+        last_error: ServerError | ClientError | None = None
         for model in (self._model, *self._fallback_models):
             try:
-                response = self._client.models.generate_content(model=model, contents=prompt)
-                return response.text
-            except ServerError as exc:  # pragma: no cover - defensive branch
+                # A chat session (not a bare generate_content call) so the SDK reliably loops
+                # back for a final text turn after resolving any automatic tool calls.
+                chat = self._client.chats.create(model=model, config=self._config)
+                response = chat.send_message(prompt)
+                if response.text:
+                    return response.text
+                logger.warning("Gemini model %r returned no text; trying next fallback.", model)
+            except (ServerError, ClientError) as exc:  # pragma: no cover - defensive branch
+                if isinstance(exc, ClientError) and exc.code != 429:
+                    raise  # not a per-model overload/quota issue; another model won't help
                 logger.warning("Gemini model %r unavailable, trying next fallback: %s", model, exc)
                 last_error = exc
-        raise last_error
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Every Gemini model returned an empty response.")
 
 
 class OpenAIChatClient:
@@ -176,7 +193,10 @@ PROVIDER_ENV_VARS = {
 
 
 def create_model_client(
-    provider: str, api_key: str | None = None, model: str | None = None
+    provider: str,
+    api_key: str | None = None,
+    model: str | None = None,
+    tools: list[Callable] | None = None,
 ) -> (
     OpenRouterChatClient
     | GeminiChatClient
@@ -192,8 +212,13 @@ def create_model_client(
             f"Unknown model provider {provider!r}; choose one of {sorted(MODEL_CLIENTS)}"
         ) from exc
 
+    if tools and provider != "gemini":
+        raise ValueError("Tool calling is only supported for the gemini provider.")
+
     resolved_key = api_key or os.getenv(PROVIDER_ENV_VARS[provider])
     if not resolved_key:
         raise ValueError(f"No API key provided or set in {PROVIDER_ENV_VARS[provider]}.")
 
+    if provider == "gemini":
+        return GeminiChatClient(resolved_key, model or DEFAULT_GEMINI_MODEL, tools=tools)
     return client_cls(resolved_key, model) if model else client_cls(resolved_key)

@@ -25,6 +25,14 @@ class Agent(Protocol):
     def handle(self, prompt: str) -> str: ...
 
 
+REPLY_STYLE_INSTRUCTION = (
+    "Reply style: this is a chat, not an essay. Answer only what was asked, in 3-6 short "
+    "sentences or a tight bullet list - a busy shop owner needs to read this on their phone "
+    "in a few seconds. Skip session topics the user didn't ask about. Only go deeper, cite a "
+    "formula, or cover another topic if the user explicitly asks for it."
+)
+
+
 class StageAdvisorAgent:
     """Answers business-growth questions using one growth stage's session system prompt."""
 
@@ -35,7 +43,9 @@ class StageAdvisorAgent:
 
     def handle(self, prompt: str) -> str:
         """Send the stage's system prompt plus the user's question to the model."""
-        return self._model_client.complete(f"{self._system_prompt}\n\nUser question: {prompt}")
+        return self._model_client.complete(
+            f"{self._system_prompt}\n\n{REPLY_STYLE_INSTRUCTION}\n\nUser question: {prompt}"
+        )
 
 
 STAGE_PROMPT_BUILDERS = {
