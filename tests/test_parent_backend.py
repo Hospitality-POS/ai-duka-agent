@@ -91,11 +91,38 @@ def test_get_stock_levels_composes_inventory_deliveries_and_orders() -> None:
     ]
 
 
+def test_get_dashboard_passes_shop_id() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/biashara-ai/dashboard"
+        assert request.url.params["shop_id"] == "shop1"
+        return httpx.Response(200, json={"header": {"shopName": "shop 1"}})
+
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://t")
+    assert client.get_dashboard("shop1") == {"header": {"shopName": "shop 1"}}
+
+
+def test_list_locations_wraps_the_shop_record() -> None:
+    client = _client_with_routes({"/shops/shop1": {"_id": "shop1", "name": "shop 1"}})
+    assert client.list_locations("shop1") == [{"_id": "shop1", "name": "shop 1"}]
+
+
+def test_list_locations_returns_empty_for_unknown_shop() -> None:
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(404)), base_url="http://t"
+    )
+    assert client.list_locations("missing") == []
+
+
+def test_list_invoices_unwraps_paginated_envelope() -> None:
+    client = _client_with_routes({"/accounting/invoices": {"data": [{"_id": "inv1"}]}})
+    assert client.list_invoices("shop1") == [{"_id": "inv1"}]
+
+
 @pytest.mark.parametrize(
     "method_name,args",
     [
-        ("list_locations", ("shop1",)),
-        ("list_invoices", ("shop1",)),
         ("get_day_summary", ("shop1",)),
         ("create_sale", ("shop1", {})),
     ],

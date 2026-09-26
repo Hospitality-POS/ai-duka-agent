@@ -1,11 +1,16 @@
 import base64
+import logging
+import os
 
+import httpx
 from cryptography.hazmat.primitives import serialization
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
-from ai_lining.chat_tools import build_dashboard_tools
+from ai_lining.chat_context import build_dashboard_context
 from ai_lining.dashboard import (
     DashboardDataSource,
     MockDashboardDataSource,
@@ -28,28 +33,49 @@ from ai_lining.models import (
     WhatsHappening,
 )
 from encryption.rsa_crypto import decrypt_rsa, encrypt_rsa, generate_rsa_keys
-from setup.business_identity import ChatModelClient
 from setup.model_provider import create_model_client, setup_openrouter
 from setup.parent_backend import BasePointParentBackendClient
 
+logger = logging.getLogger("uvicorn.error")
+
 app = FastAPI(title="Duka AI Engine")
+
+# Browser (Flutter web) clients need CORS. Auth is a bearer header, not cookies, so no
+# credentials mode is needed; narrow the origins in production via CORS_ALLOW_ORIGINS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Backend statuses the app can act on (re-login, wrong shop id) pass through; anything else
+# is the Parent Backend failing, not the caller.
+_PASSTHROUGH_BACKEND_STATUSES = {401, 403, 404}
+
+
+@app.exception_handler(httpx.HTTPStatusError)
+def parent_backend_status_error(request: Request, exc: httpx.HTTPStatusError) -> JSONResponse:
+    """Translate a Parent Backend error response into one the app can act on."""
+    status = exc.response.status_code
+    detail = f"Parent Backend {status}: {exc.response.text[:200]}"
+    logger.warning("%s %s -> %s", exc.request.method, exc.request.url, detail)
+    if status in _PASSTHROUGH_BACKEND_STATUSES:
+        return JSONResponse(status_code=status, content={"detail": detail})
+    return JSONResponse(status_code=502, content={"detail": detail})
+
+
+@app.exception_handler(httpx.RequestError)
+def parent_backend_unreachable(request: Request, exc: httpx.RequestError) -> JSONResponse:
+    """Report an unreachable Parent Backend as a 502 instead of a generic 500."""
+    logger.warning("Parent Backend unreachable: %r", exc)
+    return JSONResponse(status_code=502, content={"detail": "Parent Backend is unreachable."})
 
 
 def _bearer_token(request: Request) -> str | None:
     """Extract the caller's own Parent Backend token from an `Authorization: Bearer` header."""
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     return token if scheme.lower() == "bearer" and token else None
-
-
-def _build_insight_model_client() -> ChatModelClient | None:
-    """Build the Gemini model client AI Lining uses to generate insights, once, at startup."""
-    try:
-        return create_model_client("gemini")
-    except ValueError:
-        return None
-
-
-_insight_model_client = _build_insight_model_client()
 
 
 def get_dashboard_data_source(request: Request) -> DashboardDataSource:
@@ -59,9 +85,12 @@ def get_dashboard_data_source(request: Request) -> DashboardDataSource:
     token, so no server-side credential is stored or shared across users.
     """
     token = _bearer_token(request)
-    if not token or _insight_model_client is None:
+    if not token:
         return MockDashboardDataSource()
-    return RealDashboardDataSource(BasePointParentBackendClient(api_key=token), _insight_model_client)
+    parent_backend = BasePointParentBackendClient(
+        company_code=request.headers.get("companycode"), api_key=token
+    )
+    return RealDashboardDataSource(parent_backend)
 
 
 class OpenRouterRequest(BaseModel):
@@ -153,19 +182,17 @@ def openrouter_setup(request: OpenRouterRequest) -> dict[str, object]:
 def chat(
     request: ChatRequest, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
 ) -> dict[str, str]:
-    tools = None
-    if request.provider == "gemini" and request.user_id:
-        tools = build_dashboard_tools(request.user_id, data_source)
-
     try:
-        model_client = create_model_client(
-            request.provider, request.api_key, request.model, tools=tools
-        )
+        model_client = create_model_client(request.provider, request.api_key, request.model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    context = None
+    if request.user_id:
+        context = build_dashboard_context(request.user_id, data_source)
+
     parent_agent = ParentAgent(build_stage_advisor_agents(model_client))
-    response = parent_agent.handle(request.prompt, request.level)
+    response = parent_agent.handle(request.prompt, request.level, context)
     return {"agent": parent_agent.pick_agent(request.level).name, "response": response}
 
 

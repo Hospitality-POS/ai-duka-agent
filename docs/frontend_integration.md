@@ -6,8 +6,9 @@ this doc covers the rest of the API and links out to that one.
 
 ## Base URL
 
-Local dev: `http://localhost:8000` (`uvicorn main:app --reload`). No auth is enforced yet —
-routes take `user_id` or an API key directly in the request body/path.
+Local dev: `http://localhost:8000` (`uvicorn main:app --reload`). The engine has no login of
+its own: the dashboard and chat routes forward the user's Parent Backend token
+(`Authorization: Bearer ...`). See [`ai_lining_integration.md`](ai_lining_integration.md).
 
 ## Error handling
 
@@ -87,25 +88,16 @@ failure reason if the key is missing/invalid.
 ### `POST /chat`
 
 ```json
-{
-  "prompt": "How do I grow my customer base?",
-  "level": "early",
-  "provider": "gemini",
-  "api_key": "...",
-  "model": "gemini-2.5-flash"
-}
+{ "prompt": "Why did sales peak at this time?", "userId": "<shopId>", "level": "early_stage" }
 ```
-
-Only `prompt` is required. `provider` defaults to `"gemini"` (the other option is
-`"openrouter"`); omit `api_key` to fall back to the provider's env var
-(`GEMINI_API_KEY` / `OPENROUTER_API_KEY`). `level` selects which stage advisor agent
-answers (see `src/agents/parent_agent.py`); omit it to let the parent agent pick.
 
 ```json
-{ "agent": "early-stage-advisor", "response": "..." }
+{ "agent": "early_stage", "response": "..." }
 ```
 
-400 if the provider is unknown or no API key is available.
+Send the user's bearer token and `userId` so answers use the shop's live dashboard data.
+Field reference, quick-prompt wiring and error handling are in
+[`ai_lining_integration.md`](ai_lining_integration.md#3-chat).
 
 ## Suggested client flow
 

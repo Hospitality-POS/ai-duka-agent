@@ -1,79 +1,82 @@
-# AI Lining Dashboard — Integration Guide
+# AI Lining Dashboard & Chat — App Integration Guide
 
-How the Flutter app consumes the AI Lining dashboard endpoints exposed by `main.py`.
+How the Flutter app loads the AI Lining dashboard and the "Start a Chat" screen from the
+Duka AI Engine. Every value on the dashboard comes from one endpoint; the chat answers from
+that same data.
 
-## Base URL
+## 1. Setup
 
-Local dev: `http://localhost:8000` (`uvicorn main:app --reload`). No auth is enforced yet —
-every route takes `user_id` as a path parameter and returns that user's data.
+### Base URL
 
-## Data source note
-
-The response **shape is unchanged and final** — `fromJson` doesn't need to change. What's
-changed is where the values come from, and this matters for how the app should behave:
-
-| Section | Backed by |
+| Environment | Base URL |
 |---|---|
-| `dailyObservation` | **Real** — today's orders vs. yesterday's, bucketed hourly |
-| `watchedProduct` | **Real** — highest sales-velocity product over the last 7 days |
-| `alert` | **Real** — fires when the watched product's days-of-stock ≤ 2 |
-| `insights` | **Real** — generated per request by an LLM (Gemini/OpenRouter) from the two sections above |
-| `header`, `whatsHappening`, `salesPerformance`, `myStock` | **Still mock** — no shop-listing, historical-stock, or cost-field data source exists yet on the Parent Backend |
-| `chat` | Static, unlikely to ever be dynamic |
+| Docker (`docker compose up`) | `http://<host-ip>:8000` |
+| Local dev on the office LAN | `http://192.168.100.57:8001` (the host's IP can change; check `ipconfig`) |
 
-This only applies once the backend has `PARENT_BACKEND_API_KEY` (and a model-provider key)
-configured — with neither set, every section falls back to the old static mock, exactly as
-before. Both states return `200` with the same JSON shape, so there's no client-side flag
-to check; you just may see the four "real" sections start reflecting the shop's actual
-numbers on shops with order history.
+A phone on the same Wi-Fi can reach the engine at the host's LAN IP. `localhost` won't
+work from a phone, and on the Android emulator the host machine is `http://10.0.2.2:<port>`.
 
-### What "real" changes for the client
+**Plain HTTP in dev builds.** Android blocks cleartext HTTP by default: add
+`android:usesCleartextTraffic="true"` to the debug `AndroidManifest.xml` (or a network
+security config for the dev host). On iOS, add an `NSAppTransportSecurity` exception for the dev
+host. Don't ship either to production; production should be HTTPS.
 
-- **`user_id` in the path must be the shop's real BasePoint `_id`** (a Mongo ObjectId
-  string, e.g. `67841c7f52c7b8888375503b`), not an app-internal user id — `list_orders`,
-  `get_catalog`, etc. are all called with it as `shop_id`. Passing the wrong id won't
-  error; it'll just return data for whichever shop that id happens to match, or empty/zero
-  values if it matches nothing.
-- **A shop with no orders in the last day/week isn't an error.** `dailyObservation` will
-  come back as all-zero buckets, and `watchedProduct`/`alert` will reflect whatever
-  historical orders exist. Don't treat all-zero as a loading/error state.
-- **`insights` now costs a real LLM call per dashboard load.** Expect `/dashboard` and
-  `/insights` to be noticeably slower (and occasionally to return the fallback insight
-  `"Insights are temporarily unavailable - check back shortly."` if the model call fails)
-  than they were against the static mock. If the dashboard has a loading skeleton, keep it
-  — this is no longer an instant response.
+### Authentication
 
-## Endpoints
+The engine keeps no user sessions of its own. It forwards the user's Parent Backend
+token to the Parent Backend on every call.
 
-| Method | Path | Returns |
-|---|---|---|
-| GET | `/ai-lining/{user_id}/dashboard` | Full dashboard (all sections in one payload) |
-| GET | `/ai-lining/{user_id}/header` | `Header` |
-| GET | `/ai-lining/{user_id}/daily-observation` | `DailyObservation` |
-| GET | `/ai-lining/{user_id}/watched-product` | `WatchedProduct` |
-| GET | `/ai-lining/{user_id}/alert` | `Alert` or `null` |
-| GET | `/ai-lining/{user_id}/whats-happening` | `WhatsHappening` |
-| GET | `/ai-lining/{user_id}/insights` | `Insight[]` |
-| GET | `/ai-lining/{user_id}/sales-performance` | `SalesPerformance` |
-| GET | `/ai-lining/{user_id}/my-stock` | `MyStock` |
-| GET | `/ai-lining/{user_id}/chat-card` | `ChatCard` |
-| POST | `/ai-lining/{user_id}/insights/apply` | `{"success": bool, "message": str}` |
-| POST | `/ai-lining/{user_id}/alerts/action` | `{"success": bool, "message": str}` |
+1. Log the user in against the Parent Backend: `POST /users/login` (with the
+   `companycode` header). Keep the returned token and `shopId`.
+2. Send the token **and the same tenant code** to the Duka AI Engine on **every**
+   dashboard and chat request:
 
-Section fields are camelCase and match the widget props 1:1 (see
-`src/ai_lining/models.py`) — `fromJson` should be a straight field copy, no renaming.
+   ```http
+   Authorization: Bearer <token from /users/login>
+   companycode: <the tenant code you logged in with>
+   ```
+
+   Without `companycode` the Parent Backend answers "Tenant code required" and the engine
+   returns `502` (unless the server has a default set in `PARENT_BACKEND_COMPANY_CODE`).
+
+3. Use `shopId` as the `{user_id}` path segment and as `userId` in chat. Despite the name,
+   the engine treats it as the shop's BasePoint `_id` (a Mongo ObjectId string like
+   `67841c7f52c7b8888375503b`), **not** the app's user id.
+
+| Request has… | Engine returns |
+|---|---|
+| A bearer token | Live data for that shop, from the Parent Backend's `GET /biashara-ai/dashboard` |
+| No token | `200` with **static demo data** ("Silikhe's Shop"), the same shape as live data |
+
+A missing token doesn't cause an error. It returns demo data, so if the dashboard shows
+"Silikhe's Shop" for a real user, the token isn't being sent.
+
+## 2. Loading the dashboard
 
 ### Which route to call
 
-- **First paint**: call `/dashboard` once. It returns every section in the shape shown
-  at the bottom of this doc.
-- **Refreshing a single card** (e.g. after a quick-prompt answer changes the daily
-  observation): call that section's own route instead of re-fetching the whole
-  dashboard.
+- **Opening the dashboard / pull-to-refresh:** `GET /ai-lining/{shopId}/dashboard`. It returns
+  every section in one response.
+- **Refreshing one card:** that section's route (table below). Each one fetches the full
+  dashboard from the Parent Backend anyway, so if you need more than one section, call
+  `/dashboard` instead.
 
-## Request/response examples
+| Method | Path | Returns | Widget |
+|---|---|---|---|
+| GET | `/ai-lining/{shopId}/dashboard` | Every section below | Whole screen |
+| GET | `/ai-lining/{shopId}/header` | `header` | Shop name, role, AI health strip |
+| GET | `/ai-lining/{shopId}/daily-observation` | `dailyObservation` | Hourly sales chart |
+| GET | `/ai-lining/{shopId}/watched-product` | `watchedProduct` | Watched product card |
+| GET | `/ai-lining/{shopId}/alert` | `alert` **or `null`** | Alert banner |
+| GET | `/ai-lining/{shopId}/whats-happening` | `whatsHappening` | "What's happening" card |
+| GET | `/ai-lining/{shopId}/insights` | `insights[]` | Insight cards |
+| GET | `/ai-lining/{shopId}/sales-performance` | `salesPerformance` | Monthly sales chart |
+| GET | `/ai-lining/{shopId}/my-stock` | `myStock` | Stock capital card |
+| GET | `/ai-lining/{shopId}/chat-card` | `chat` | "Start a Chat" entry card |
+| POST | `/ai-lining/{shopId}/insights/apply` | `{success, message}` | Insight "Apply" button |
+| POST | `/ai-lining/{shopId}/alerts/action` | `{success, message}` | Alert "See what to do" |
 
-### `GET /ai-lining/u1/dashboard`
+### Response: `GET /ai-lining/{shopId}/dashboard`
 
 ```json
 {
@@ -85,82 +88,259 @@ Section fields are camelCase and match the widget props 1:1 (see
     "peakWindow": "From 6:30 - 9:30AM",
     "performancePercent": "30%",
     "performanceNote": "Your sales performance is 30% better compare to last month",
-    "quickPrompts": ["Why did sales peak at this time?", "..."]
+    "quickPrompts": ["Why did sales peak at this time?", "Compare this to last week", "Explain this trend in plain terms"]
   },
-  "watchedProduct": { "...": "..." },
-  "alert": { "id": "low_stock_morning_coffee", "title": "...", "message": "...", "actionLabel": "..." },
-  "whatsHappening": { "...": "..." },
-  "insights": [{ "id": "insight_1", "text": "..." }],
-  "salesPerformance": { "...": "..." },
-  "myStock": { "...": "..." },
+  "watchedProduct": {
+    "amount": "Ksh 1250",
+    "subtitle": "Morning Coffee Sales",
+    "salesLabel": "Sales",
+    "salesValue": "Ksh 23,000",
+    "trend": [2.0, 2.6, 2.3, 3.2, 3.0, 3.8, 4.4, 4.1, 5.0],
+    "markerIndex": 6,
+    "recommendation": "You're Likely To Run Out Tomorrow Around 10:00 AM.",
+    "quickPrompts": ["..."]
+  },
+  "alert": {
+    "id": "low_stock_morning_coffee",
+    "title": "Morning Coffee",
+    "message": "You may run out of Morning Coffee before your busiest sales period.",
+    "actionLabel": "See what to do"
+  },
+  "whatsHappening": {
+    "observation": "More Customers Are Buying Coffee During The Morning Rush.",
+    "implication": "This Is Increasing Your Daily Revenue, But Your Current Stock May Not Last Through Tomorrow.",
+    "stockLabel": "Stock remaining",
+    "stockValue": "78 units",
+    "stockStatus": "Low Stock"
+  },
+  "insights": [
+    { "id": "insight_1", "text": "Your Morning Coffee sales are performing exceptionally today. ..." }
+  ],
+  "salesPerformance": {
+    "monthlySales": [3.2, 4.6, 3.4, 5.2, 4.0, 3.0, 4.2, 5.4, 4.8, 3.6, 4.4, 5.0],
+    "monthLabels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "highlightIndex": 7,
+    "annotation": "4600 Live sales in May",
+    "stockPercent": "30%",
+    "stockNote": "You have 30% more stock available than last month, helping you stay ahead of demand.",
+    "quickPrompts": ["..."]
+  },
+  "myStock": {
+    "capitalLabel": "Total Capital",
+    "capitalValue": "Ksh 274,000",
+    "note": "Orders Coming From Suppliers Which Exceeds The Capital By 2%",
+    "quickPrompts": ["Break down this total for me", "Compare this to last month", "What's driving this number?"]
+  },
   "chat": { "title": "Start a Chat", "subtitle": "Real-time chatting with business analytics" }
 }
 ```
 
-`alert` is `null` when there's nothing to surface — check for that before rendering the
-alert card rather than assuming it's always present.
+The full demo payload is in [`ai_lining_dashboard_sample.json`](ai_lining_dashboard_sample.json),
+which is useful as a test fixture for `fromJson`.
 
-### `POST /ai-lining/u1/insights/apply`
+### Rendering rules
 
-Request:
+- **Field names are camelCase and match the widget props 1:1**, so `fromJson` is a straight
+  copy with no renaming.
+- **Display strings are pre-formatted.** `aiHealth`, `peakSales`, `amount`, `salesValue`,
+  `capitalValue`, `stockValue` and the percentages arrive ready to show (`"Ksh 274,000"`,
+  `"87%"`). Render them as-is and don't parse them into numbers.
+- **Chart arrays are plain numbers.** `hourlySales`, `trend` and `monthlySales` are
+  `List<double>` (JSON may send `4200` or `4.2`, so read with `(e as num).toDouble()`).
+  `peakIndex`, `markerIndex` and `highlightIndex` index into their array to mark the
+  highlighted point.
+- **`monthLabels` has one label per `monthlySales` point (12).** Use it instead of a
+  hardcoded label list.
+- **Nullable fields.** Build the widget so these don't crash:
+  - `alert`: `null` when nothing needs attention. Hide the alert banner.
+  - `salesPerformance.stockPercent`: `null` when the shop has no stock-movement history yet.
+    `stockNote` still explains why, so show the note and skip the percentage.
+- **Zeros are valid data.** A new shop, or one with no sales today, returns zero-filled
+  charts. Don't treat all-zero as a loading or error state.
 
-```json
-{ "insight_id": "insight_1" }
-```
+### Buttons
 
-Success (200):
-
-```json
-{ "success": true, "message": "Insight applied." }
-```
-
-Unknown id (404):
-
-```json
-{ "detail": "Insight 'insight_1' was not found for this user." }
-```
-
-### `POST /ai-lining/u1/alerts/action`
-
-Same shape, keyed on `alert_id` against the id from the last `/alert` (or `/dashboard`)
-response.
-
-```json
-{ "alert_id": "low_stock_morning_coffee" }
-```
-
-## Wiring up `onApplyInsight` / `onSeeWhatToDo`
-
-Both callbacks were no-ops client-side. Now that each `Insight` and `Alert` carries an
-`id`, wire them to the two POST routes above:
-
-- `onApplyInsight(insight)` → `POST /ai-lining/{userId}/insights/apply` with
+- **Insight "Apply"** (`onApplyInsight`): `POST /ai-lining/{shopId}/insights/apply` with
   `{"insight_id": insight.id}`.
-- `onSeeWhatToDo(alert)` → `POST /ai-lining/{userId}/alerts/action` with
-  `{"alert_id": alert.id}`.
+- **Alert "See what to do"** (`onSeeWhatToDo`): `POST /ai-lining/{shopId}/alerts/action` with
+  `{"alert_id": alert.id}`. A natural follow-up is to open the chat with a prompt about
+  the alert (see below).
 
-A 404 means the id is stale (e.g. the insight/alert already rotated out) — refetch the
-relevant section rather than treating it as a hard failure.
+Both return `200 {"success": true, "message": "..."}`. A `404` means the id is stale (the
+insight or alert has rotated out), so refetch that section. Note that these actions are
+**acknowledged but not yet stored** on the Parent Backend. Update the UI optimistically,
+but don't rely on the choice persisting across reloads yet.
 
-## Quick prompts
+## 3. Chat
 
-`quickPrompts` (in `dailyObservation`, `watchedProduct`, `salesPerformance`, `myStock`)
-are plain strings now driven by the backend, not hardcoded per card. Render them as-is;
-there's no id to round-trip yet since tapping one is expected to just seed the chat input,
-not call back to the API.
+The chat answers from the shop's live dashboard data, so it can say things like
+"your Morning Coffee stock (78 units) won't last past 10 AM tomorrow" instead of generic
+advice.
 
-## Error handling
+### `POST /chat`
 
-All endpoints return standard FastAPI error bodies: `{"detail": "<message>"}`. Section
-GET routes don't 404 on an unknown/wrong `user_id` — with the mock data source they return
-the same static values regardless of id; with the real data source, a bad shop id returns
-`200` with empty/zero values (see above) rather than a 404. Don't treat a `200` alone as
-confirmation the shop id you passed was valid.
+```http
+POST /chat
+Authorization: Bearer <token>
+Content-Type: application/json
+```
 
-## Known gap to fix alongside this
+```json
+{
+  "prompt": "Why did sales peak at this time?",
+  "userId": "67841c7f52c7b8888375503b",
+  "level": "early_stage"
+}
+```
 
-`monthLabels` in the Flutter app's `ai_lining_controller.dart` (line 26) currently
-hardcodes 4 entries (`['Jan','Mar','May','Jul']`) against 12 `monthlySales` points.
-`/sales-performance` and `/dashboard` both return all 12 labels — once the controller
-consumes the API response instead of its hardcoded fields, this mismatch goes away on
-its own; no separate fix needed if the migration is done in one pass.
+| Field | Required | Notes |
+|---|---|---|
+| `prompt` | Yes | The user's message. |
+| `userId` | For shop-aware answers | The shop id (same as `{shopId}` above). Without it, the chat gives general business advice. |
+| `level` | No | `early_stage`, `growth_stage` or `mature_stage`: the business's growth stage, which picks the advisor. Anything else (or omitted) uses `early_stage`. |
+| `provider` | No | `gemini` (default), `openrouter`, `openai`, `deepseek`, `anthropic`. Leave it unset unless you're told otherwise. |
+| `model`, `apiKey` | No | Leave unset: the server uses its own configured model and key. |
+
+Response `200`:
+
+```json
+{ "agent": "early_stage", "response": "Your peak was 6:30–9:30 AM because ..." }
+```
+
+`response` is plain text with the occasional markdown bullet list. Render it with a
+markdown widget (e.g. `flutter_markdown`) or strip `*`/`-` markers. Replies are short by
+design (3–6 sentences, written for a phone screen).
+
+**Latency:** a chat call makes a live model request, typically a few seconds and longer
+when the model provider is busy. Show a typing indicator and use a generous timeout
+(60 s).
+
+### Quick prompts
+
+Every card with `quickPrompts` shows them as chips. Tapping a chip should open the chat
+and send the chip text as `prompt`, with the same `userId` and token. Because the chat
+already has the whole dashboard, "Why did sales peak at this time?" gets answered from the
+shop's real peak window. You don't need to send the card data along.
+
+The chat is **stateless**: each `/chat` call is independent and the engine doesn't
+remember earlier messages. Keep the conversation history on the app side for display.
+
+## 4. Errors
+
+Errors come back as `{"detail": "<message>"}`.
+
+| Status | Meaning | What the app should do |
+|---|---|---|
+| `401` / `403` | The Parent Backend rejected the token (expired or revoked) | Send the user to log in again |
+| `404` on a GET | The Parent Backend doesn't recognise the shop id | Check you're sending `shopId` from login, not a user id |
+| `404` on a POST | Stale insight or alert id | Refetch that section |
+| `400` on `/chat` | Unknown `provider` or no API key configured server-side | Report it; it's a config issue, not the user's fault |
+| `502` | The Parent Backend is down or returned an error; `detail` carries its status and message | Show "Couldn't load your data, pull to retry"; log `detail` for debugging |
+| `500` on `/chat` | The AI model is unavailable after all fallbacks (usually a demand spike) | Show "The assistant is busy, try again in a moment" with a retry |
+
+If the Parent Backend fails during a **chat** request, the chat still answers, just without
+shop data. That case doesn't produce an error.
+
+## 5. Dart reference
+
+A minimal service matching the contract above, using the `http` package:
+
+```dart
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class DukaApiException implements Exception {
+  DukaApiException(this.statusCode, this.detail);
+  final int statusCode;
+  final String detail;
+  bool get needsLogin => statusCode == 401 || statusCode == 403;
+}
+
+class DukaApi {
+  DukaApi({
+    required this.baseUrl,
+    required this.token,
+    required this.companyCode,
+    required this.shopId,
+  });
+
+  final String baseUrl; // e.g. http://192.168.100.57:8001
+  final String token;   // from Parent Backend POST /users/login
+  final String companyCode; // the tenant code sent to /users/login
+  final String shopId;  // `shopId` from the same login response
+
+  Map<String, String> get _headers => {
+        'Authorization': 'Bearer $token',
+        'companycode': companyCode,
+        'Content-Type': 'application/json',
+      };
+
+  Future<Map<String, dynamic>> _send(Future<http.Response> request) async {
+    final response = await request;
+    final body = jsonDecode(response.body);
+    if (response.statusCode != 200) {
+      throw DukaApiException(response.statusCode, body['detail']?.toString() ?? '');
+    }
+    return body as Map<String, dynamic>;
+  }
+
+  Future<AiLiningDashboard> getDashboard() async => AiLiningDashboard.fromJson(await _send(
+        http.get(Uri.parse('$baseUrl/ai-lining/$shopId/dashboard'), headers: _headers)));
+
+  Future<String> chat(String prompt, {String? level}) async {
+    final body = await _send(http
+        .post(
+          Uri.parse('$baseUrl/chat'),
+          headers: _headers,
+          body: jsonEncode({'prompt': prompt, 'userId': shopId, 'level': ?level}),
+        )
+        .timeout(const Duration(seconds: 60)));
+    return body['response'] as String;
+  }
+
+  Future<void> applyInsight(String insightId) => _send(http.post(
+      Uri.parse('$baseUrl/ai-lining/$shopId/insights/apply'),
+      headers: _headers,
+      body: jsonEncode({'insight_id': insightId})));
+
+  Future<void> actOnAlert(String alertId) => _send(http.post(
+      Uri.parse('$baseUrl/ai-lining/$shopId/alerts/action'),
+      headers: _headers,
+      body: jsonEncode({'alert_id': alertId})));
+}
+```
+
+(`'level': ?level` is Dart 3.8's null-aware map element. On older SDKs, use
+`if (level != null) 'level': level`.)
+
+Model classes follow the JSON 1:1. The two nullable spots look like this:
+
+```dart
+class AiLiningDashboard {
+  AiLiningDashboard.fromJson(Map<String, dynamic> json)
+      : header = Header.fromJson(json['header']),
+        alert = json['alert'] == null ? null : Alert.fromJson(json['alert']),
+        salesPerformance = SalesPerformance.fromJson(json['salesPerformance']);
+        // ...dailyObservation, watchedProduct, whatsHappening, insights, myStock, chat
+
+  final Header header;
+  final Alert? alert; // null -> hide the alert banner
+  final SalesPerformance salesPerformance;
+}
+
+class SalesPerformance {
+  SalesPerformance.fromJson(Map<String, dynamic> json)
+      : monthlySales = (json['monthlySales'] as List).map((e) => (e as num).toDouble()).toList(),
+        monthLabels = List<String>.from(json['monthLabels']),
+        highlightIndex = json['highlightIndex'] as int,
+        stockPercent = json['stockPercent'] as String?, // null -> show stockNote only
+        stockNote = json['stockNote'] as String;
+        // ...annotation, quickPrompts
+
+  final List<double> monthlySales;
+  final List<String> monthLabels;
+  final int highlightIndex;
+  final String? stockPercent;
+  final String stockNote;
+}
+```

@@ -7,9 +7,9 @@ https://api.hospitality.reliatech.co.ke on 2026-09-23: `/product-inventory` item
 `product_id` foreign key); `/purchase-orders`' `po_items` track `quantity_ordered` and
 `quantity_received` directly (not a single `quantity`); list endpoints return a bare array
 when there are results but a `{"data": [...]}` envelope on an empty result (see
-`_list_body`). `list_locations`, `list_invoices`, `create_sale`, and `get_day_summary` have
-no matching endpoint yet (no `/shops` or `/cart` namespace exists) and raise
-NotImplementedError until those are confirmed.
+`_list_body`). `get_dashboard`, `list_locations`, and `list_invoices` follow the Parent
+Backend team's answers in `docs/parent_backend_api_responses.md`; `create_sale` and
+`get_day_summary` are not wired up yet and raise NotImplementedError.
 """
 
 from __future__ import annotations
@@ -119,18 +119,32 @@ class BasePointParentBackendClient:
             )
         return procurement
 
+    def get_dashboard(self, user_id: str) -> dict:
+        """Fetch a shop's full AI Lining dashboard, computed by the Parent Backend from live data."""
+        response = self._client.get("/biashara-ai/dashboard", params={"shop_id": user_id})
+        response.raise_for_status()
+        return response.json()
+
     def list_locations(self, user_id: str) -> list[dict]:
-        """Raise: no shop-listing endpoint exists in the Parent Backend API yet."""
-        raise NotImplementedError("No /shops endpoint exists in the Parent Backend API yet.")
+        """Fetch the shop's own record as a one-item list, or an empty list if it doesn't exist."""
+        response = self._client.get(f"/shops/{user_id}")
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        return [response.json()]
 
     def list_invoices(self, user_id: str) -> list[dict]:
-        """Raise: no invoices endpoint exists in the Parent Backend API yet."""
-        raise NotImplementedError("No /cart/invoices endpoint exists in the Parent Backend API yet.")
+        """Fetch the shop's customer invoices (POS sales and manual bookkeeping invoices)."""
+        return _list_body(
+            self._client.get(
+                "/accounting/invoices", params={"shop_id": user_id, "direction": "customer"}
+            )
+        )
 
     def get_day_summary(self, user_id: str) -> dict:
         """Raise: no endpoint exists yet to compose a day summary from."""
-        raise NotImplementedError("No /cart/invoices endpoint exists in the Parent Backend API yet.")
+        raise NotImplementedError("No day-summary endpoint exists in the Parent Backend API yet.")
 
     def create_sale(self, user_id: str, cart_payload: dict) -> dict:
-        """Raise: no cart/checkout endpoint exists in the Parent Backend API yet."""
-        raise NotImplementedError("No /cart or /checkout endpoint exists in the Parent Backend API yet.")
+        """Raise: the cart -> `POST /orders/create` checkout flow is not wired up yet."""
+        raise NotImplementedError("create_sale (cart -> /orders/create) is not wired up yet.")

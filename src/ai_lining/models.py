@@ -83,7 +83,7 @@ class SalesPerformance(BaseModel):
     month_labels: list[str] = Field(alias="monthLabels")
     highlight_index: int = Field(alias="highlightIndex")
     annotation: str
-    stock_percent: str = Field(alias="stockPercent")
+    stock_percent: str | None = Field(alias="stockPercent")
     stock_note: str = Field(alias="stockNote")
     quick_prompts: list[str] = Field(alias="quickPrompts")
 

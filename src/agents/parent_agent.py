@@ -22,7 +22,7 @@ class Agent(Protocol):
 
     name: str
 
-    def handle(self, prompt: str) -> str: ...
+    def handle(self, prompt: str, context: str | None = None) -> str: ...
 
 
 REPLY_STYLE_INSTRUCTION = (
@@ -41,11 +41,13 @@ class StageAdvisorAgent:
         self._system_prompt = system_prompt
         self._model_client = model_client
 
-    def handle(self, prompt: str) -> str:
-        """Send the stage's system prompt plus the user's question to the model."""
-        return self._model_client.complete(
-            f"{self._system_prompt}\n\n{REPLY_STYLE_INSTRUCTION}\n\nUser question: {prompt}"
-        )
+    def handle(self, prompt: str, context: str | None = None) -> str:
+        """Send the stage's system prompt, any shop context, and the user's question to the model."""
+        sections = [self._system_prompt, REPLY_STYLE_INSTRUCTION]
+        if context:
+            sections.append(context)
+        sections.append(f"User question: {prompt}")
+        return self._model_client.complete("\n\n".join(sections))
 
 
 STAGE_PROMPT_BUILDERS = {
@@ -74,7 +76,7 @@ class ParentAgent:
         """Return the agent assigned to `level`, falling back to the default agent."""
         return self._agents.get(level, self._agents[self._default_agent])
 
-    def handle(self, prompt: str, level: str | None) -> str:
-        """Route `prompt` to the agent for `level` and return that agent's answer."""
+    def handle(self, prompt: str, level: str | None, context: str | None = None) -> str:
+        """Route `prompt` (with optional shop `context`) to the agent for `level`."""
         agent = self.pick_agent(level)
-        return agent.handle(prompt)
+        return agent.handle(prompt, context)

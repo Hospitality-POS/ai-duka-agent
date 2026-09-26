@@ -1,0 +1,88 @@
+{
+  "header": {
+    "shopName": "Silikhe's Shop",
+    "role": "Store Manager",
+    "aiHealth": "87%"
+  },
+  "dailyObservation": {
+    "hourlySales": [4200, 3800, 5200, 4600, 6100, 5400, 9000, 5800, 4900, 6300, 5100, 4400],
+    "peakIndex": 6,
+    "peakSales": "2000 Sales",
+    "peakWindow": "From 6:30 - 9:30AM",
+    "performancePercent": "30%",
+    "performanceNote": "Your sales performance is 30% better compare to last month",
+    "quickPrompts": [
+      "Why did sales peak at this time?",
+      "Compare this to last week",
+      "Explain this trend in plain terms"
+    ]
+  },
+  "watchedProduct": {
+    "amount": "Ksh 1250",
+    "subtitle": "Morning Coffee Sales",
+    "salesLabel": "Sales",
+    "salesValue": "Ksh 23,000",
+    "trend": [2.0, 2.6, 2.3, 3.2, 3.0, 3.8, 4.4, 4.1, 5.0],
+    "markerIndex": 6,
+    "recommendation": "You're Likely To Run Out Tomorrow Around 10:00 AM.",
+    "quickPrompts": [
+      "Why did sales peak at this time?",
+      "Compare this to last week",
+      "Explain this trend in plain terms"
+    ]
+  },
+  "alert": {
+    "id": "low_stock_morning_coffee",
+    "title": "Morning Coffee",
+    "message": "You may run out of Morning Coffee before your busiest sales period.",
+    "actionLabel": "See what to do"
+  },
+  "whatsHappening": {
+    "observation": "More Customers Are Buying Coffee During The Morning Rush.",
+    "implication": "This Is Increasing Your Daily Revenue, But Your Current Stock May Not Last Through Tomorrow.",
+    "stockLabel": "Stock remaining",
+    "stockValue": "78 units",
+    "stockStatus": "Low Stock"
+  },
+  "insights": [
+    {
+      "id": "insight_1",
+      "text": "Your Morning Coffee sales are performing exceptionally today. Pair them with pastries to maximize your average ticket."
+    },
+    {
+      "id": "insight_2",
+      "text": "Restocking Morning Coffee before 9:00 AM keeps your busiest window covered and protects tomorrow's revenue."
+    },
+    {
+      "id": "insight_3",
+      "text": "Counter sales outpace online 3:1 before noon. Move your promo staff to the counter during the morning rush."
+    }
+  ],
+  "salesPerformance": {
+    "monthlySales": [3.2, 4.6, 3.4, 5.2, 4.0, 3.0, 4.2, 5.4, 4.8, 3.6, 4.4, 5.0],
+    "monthLabels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "highlightIndex": 7,
+    "annotation": "4600 Live sales in May",
+    "stockPercent": "30%",
+    "stockNote": "You have 30% more stock available than last month, helping you stay ahead of demand.",
+    "quickPrompts": [
+      "Why did sales peak at this time?",
+      "Compare this to last week",
+      "Explain this trend in plain terms"
+    ]
+  },
+  "myStock": {
+    "capitalLabel": "Total Capital",
+    "capitalValue": "Ksh 274,000",
+    "note": "Orders Coming From Suppliers Which Exceeds The Capital By 2%",
+    "quickPrompts": [
+      "Break down this total for me",
+      "Compare this to last month",
+      "What's driving this number?"
+    ]
+  },
+  "chat": {
+    "title": "Start a Chat",
+    "subtitle": "Real-time chatting with business analytics"
+  }
+}
