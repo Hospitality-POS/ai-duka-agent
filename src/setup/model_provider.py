@@ -42,7 +42,7 @@ def setup_openrouter(
 
     try:
         with OpenRouter(api_key=resolved_key) as client:
-            response = client.get_models()
+            response = client.models.list()
             if response:
                 return True, "OpenRouter setup successful."
             return False, "Failed to retrieve models from OpenRouter."
@@ -80,7 +80,7 @@ class OpenRouterChatClient:
     def complete(self, prompt: str) -> str:
         """Send a prompt to OpenRouter and return the completion text."""
         with OpenRouter(api_key=self._api_key) as client:
-            response = client.chat.completions.create(
+            response = client.chat.send(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
             )
