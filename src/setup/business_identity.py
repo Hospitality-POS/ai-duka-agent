@@ -225,7 +225,7 @@ def create_digital_instance(
 def onboard_or_refresh_business(
     user_id: str,
     parent_backend: ParentBackendClient,
-    vector_store: VectorStore,
+    vector_store: VectorStore | None,
     leveling_engine: BusinessLevelingEngine,
     goal_agent: GoalOrientedAgent,
     model_client: ChatModelClient,
@@ -237,7 +237,8 @@ def onboard_or_refresh_business(
 
     For an existing user, `onboarding_answers` is ignored and data is pulled
     from the Parent Backend Engine. For a new user, pass their answers to
-    `get_onboarding_questions()` here instead of hitting the backend.
+    `get_onboarding_questions()` here instead of hitting the backend. Pass
+    `vector_store=None` to skip persistence until a vector database exists.
     """
     if is_existing_user(user_id, parent_backend):
         blueprint = build_blueprint_from_backend(user_id, parent_backend, start_date, end_date)
@@ -247,7 +248,8 @@ def onboard_or_refresh_business(
     instance, _message = create_digital_instance(blueprint, model_client)
     blueprint.digital_instance = instance
 
-    vector_store.upsert(user_id, blueprint)
+    if vector_store is not None:
+        vector_store.upsert(user_id, blueprint)
     level = leveling_engine.assess(blueprint)
     goals = goal_agent.allocate_goals(blueprint, level)
     return blueprint, level, goals

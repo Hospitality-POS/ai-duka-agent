@@ -123,7 +123,6 @@ def test_list_invoices_unwraps_paginated_envelope() -> None:
 @pytest.mark.parametrize(
     "method_name,args",
     [
-        ("get_day_summary", ("shop1",)),
         ("create_sale", ("shop1", {})),
     ],
 )
@@ -131,3 +130,14 @@ def test_unbacked_methods_raise_not_implemented(method_name: str, args: tuple) -
     client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
     with pytest.raises(NotImplementedError):
         getattr(client, method_name)(*args)
+
+
+def test_get_inventory_filters_by_shop() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/product-inventory"
+        assert request.url.params["shop_id"] == "shop1"
+        return httpx.Response(200, json=[{"_id": "prod1", "quantity": 3}])
+
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://t")
+    assert client.get_inventory("shop1") == [{"_id": "prod1", "quantity": 3}]

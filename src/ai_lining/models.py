@@ -24,7 +24,7 @@ class DailyObservation(BaseModel):
     peak_index: int = Field(alias="peakIndex")
     peak_sales: str = Field(alias="peakSales")
     peak_window: str = Field(alias="peakWindow")
-    performance_percent: str = Field(alias="performancePercent")
+    performance_percent: str | None = Field(alias="performancePercent")
     performance_note: str = Field(alias="performanceNote")
     quick_prompts: list[str] = Field(alias="quickPrompts")
 
@@ -113,7 +113,7 @@ class AiLiningDashboard(BaseModel):
 
     header: Header
     daily_observation: DailyObservation = Field(alias="dailyObservation")
-    watched_product: WatchedProduct = Field(alias="watchedProduct")
+    watched_product: WatchedProduct | None = Field(default=None, alias="watchedProduct")
     alert: Alert | None = None
     whats_happening: WhatsHappening = Field(alias="whatsHappening")
     insights: list[Insight]

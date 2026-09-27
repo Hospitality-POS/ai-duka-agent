@@ -32,6 +32,8 @@ than a generic "something went wrong."
 | POST | `/setup/openrouter` | Validate an OpenRouter API key |
 | POST | `/chat` | Send a prompt to a stage advisor agent |
 | GET | `/ai-lining/{user_id}/...` | AI Lining dashboard — see [`ai_lining_integration.md`](ai_lining_integration.md) |
+| GET | `/identity/questions` | Onboarding questions for a new shop — see [`identity_integration.md`](identity_integration.md) |
+| POST | `/identity/{shop_id}` | Build the shop's digital identity once — see [`identity_integration.md`](identity_integration.md) |
 
 ### `GET /`
 

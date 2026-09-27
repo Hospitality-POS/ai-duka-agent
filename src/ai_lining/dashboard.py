@@ -7,7 +7,11 @@ section from the Parent Backend Engine's `GET /biashara-ai/dashboard` (see
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
+
+import httpx
+from pydantic import ValidationError
 
 from ai_lining.models import (
     AiLiningDashboard,
@@ -23,13 +27,15 @@ from ai_lining.models import (
 )
 from setup.parent_backend import BasePointParentBackendClient
 
+logger = logging.getLogger(__name__)
+
 
 class DashboardDataSource(Protocol):
     """Read access to the Parent Backend Engine's AI Lining dashboard data."""
 
     def get_header(self, user_id: str) -> Header: ...
     def get_daily_observation(self, user_id: str) -> DailyObservation: ...
-    def get_watched_product(self, user_id: str) -> WatchedProduct: ...
+    def get_watched_product(self, user_id: str) -> WatchedProduct | None: ...
     def get_alert(self, user_id: str) -> Alert | None: ...
     def get_whats_happening(self, user_id: str) -> WhatsHappening: ...
     def get_insights(self, user_id: str) -> list[Insight]: ...
@@ -180,8 +186,10 @@ class RealDashboardDataSource(MockDashboardDataSource):
     """A `DashboardDataSource` backed by the Parent Backend's `GET /biashara-ai/dashboard`.
 
     `user_id` is treated as the shop_id that endpoint expects. The payload is fetched once per
-    shop and reused across sections, since one instance serves a single request. Insight and
-    alert actions have no backend endpoint yet and fall back to `MockDashboardDataSource`.
+    shop and reused across sections, since one instance serves a single request. When the
+    Parent Backend is down (unreachable or a 5xx), every section falls back to the
+    `MockDashboardDataSource` demo data; its 4xx errors (bad token, unknown shop) still raise.
+    Insight and alert actions have no backend endpoint yet and always use the mock.
     """
 
     def __init__(self, parent_backend: BasePointParentBackendClient) -> None:
@@ -190,8 +198,22 @@ class RealDashboardDataSource(MockDashboardDataSource):
 
     def _dashboard(self, user_id: str) -> AiLiningDashboard:
         if user_id not in self._dashboards:
-            payload = self._parent_backend.get_dashboard(user_id)
-            self._dashboards[user_id] = AiLiningDashboard.model_validate(payload)
+            try:
+                payload = self._parent_backend.get_dashboard(user_id)
+                try:
+                    dashboard = AiLiningDashboard.model_validate(payload)
+                except ValidationError:
+                    logger.warning("Unexpected dashboard payload for %r: %.2000s", user_id, payload)
+                    raise
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                is_client_error = (
+                    isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500
+                )
+                if is_client_error:
+                    raise
+                logger.warning("Parent Backend down, serving demo dashboard: %r", exc)
+                dashboard = build_dashboard(user_id, MockDashboardDataSource())
+            self._dashboards[user_id] = dashboard
         return self._dashboards[user_id]
 
     def get_header(self, user_id: str) -> Header:
@@ -202,8 +224,8 @@ class RealDashboardDataSource(MockDashboardDataSource):
         """Return today's hourly sales and peak window."""
         return self._dashboard(user_id).daily_observation
 
-    def get_watched_product(self, user_id: str) -> WatchedProduct:
-        """Return the highest-velocity product and its restock recommendation."""
+    def get_watched_product(self, user_id: str) -> WatchedProduct | None:
+        """Return the highest-velocity product, or None if the shop has too little sales data."""
         return self._dashboard(user_id).watched_product
 
     def get_alert(self, user_id: str) -> Alert | None:

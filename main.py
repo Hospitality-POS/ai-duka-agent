@@ -1,16 +1,18 @@
 import base64
 import logging
 import os
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 from cryptography.hazmat.primitives import serialization
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
-from ai_lining.chat_context import build_dashboard_context
+from ai_lining.chat_context import build_chat_context
 from ai_lining.dashboard import (
     DashboardDataSource,
     MockDashboardDataSource,
@@ -32,7 +34,15 @@ from ai_lining.models import (
     WatchedProduct,
     WhatsHappening,
 )
+from business_growth_strategy.leveling_engine import BusinessLevelingEngine
 from encryption.rsa_crypto import decrypt_rsa, encrypt_rsa, generate_rsa_keys
+from setup.business_identity import (
+    ChatModelClient,
+    build_user_response,
+    get_onboarding_questions,
+    is_existing_user,
+    onboard_or_refresh_business,
+)
 from setup.model_provider import create_model_client, setup_openrouter
 from setup.parent_backend import BasePointParentBackendClient
 
@@ -65,6 +75,15 @@ def parent_backend_status_error(request: Request, exc: httpx.HTTPStatusError) ->
     return JSONResponse(status_code=502, content={"detail": detail})
 
 
+@app.exception_handler(ValidationError)
+def parent_backend_payload_mismatch(request: Request, exc: ValidationError) -> JSONResponse:
+    """Report a Parent Backend payload that doesn't match the expected shape as a 502."""
+    fields = ", ".join(".".join(str(part) for part in error["loc"]) for error in exc.errors())
+    return JSONResponse(
+        status_code=502, content={"detail": f"Unexpected Parent Backend data in: {fields}"}
+    )
+
+
 @app.exception_handler(httpx.RequestError)
 def parent_backend_unreachable(request: Request, exc: httpx.RequestError) -> JSONResponse:
     """Report an unreachable Parent Backend as a 502 instead of a generic 500."""
@@ -87,10 +106,36 @@ def get_dashboard_data_source(request: Request) -> DashboardDataSource:
     token = _bearer_token(request)
     if not token:
         return MockDashboardDataSource()
-    parent_backend = BasePointParentBackendClient(
+    return RealDashboardDataSource(_parent_backend_client(request, token))
+
+
+def _parent_backend_client(request: Request, token: str) -> BasePointParentBackendClient:
+    """Build a Parent Backend client with the caller's own token and tenant code."""
+    return BasePointParentBackendClient(
         company_code=request.headers.get("companycode"), api_key=token
     )
-    return RealDashboardDataSource(parent_backend)
+
+
+def get_parent_backend(request: Request) -> BasePointParentBackendClient:
+    """Require the caller's bearer token and build a Parent Backend client from it."""
+    token = _bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Authorization: Bearer token.")
+    return _parent_backend_client(request, token)
+
+
+def get_optional_parent_backend(request: Request) -> BasePointParentBackendClient | None:
+    """Build a Parent Backend client when the caller sent a bearer token, else None."""
+    token = _bearer_token(request)
+    return _parent_backend_client(request, token) if token else None
+
+
+def get_identity_model_client() -> ChatModelClient:
+    """Build the model client that writes the digital identity and its goals."""
+    try:
+        return create_model_client("gemini")
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 class OpenRouterRequest(BaseModel):
@@ -107,6 +152,10 @@ class ChatRequest(BaseModel):
     api_key: str | None = Field(default=None, alias="apiKey")
     model: str | None = None
     user_id: str | None = Field(default=None, alias="userId")
+
+
+class IdentityRequest(BaseModel):
+    answers: dict[str, str] | None = None
 
 
 class RSAEncryptRequest(BaseModel):
@@ -180,7 +229,9 @@ def openrouter_setup(request: OpenRouterRequest) -> dict[str, object]:
 
 @app.post("/chat")
 def chat(
-    request: ChatRequest, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+    request: ChatRequest,
+    data_source: DashboardDataSource = Depends(get_dashboard_data_source),
+    parent_backend: BasePointParentBackendClient | None = Depends(get_optional_parent_backend),
 ) -> dict[str, str]:
     try:
         model_client = create_model_client(request.provider, request.api_key, request.model)
@@ -189,7 +240,7 @@ def chat(
 
     context = None
     if request.user_id:
-        context = build_dashboard_context(request.user_id, data_source)
+        context = build_chat_context(request.user_id, data_source, parent_backend)
 
     parent_agent = ParentAgent(build_stage_advisor_agents(model_client))
     response = parent_agent.handle(request.prompt, request.level, context)
@@ -221,7 +272,7 @@ def get_daily_observation(
 @app.get("/ai-lining/{user_id}/watched-product")
 def get_watched_product(
     user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
-) -> WatchedProduct:
+) -> WatchedProduct | None:
     return data_source.get_watched_product(user_id)
 
 
@@ -289,3 +340,41 @@ def post_alert_action(
     if not success:
         raise HTTPException(status_code=404, detail=message)
     return {"success": True, "message": message}
+
+
+IDENTITY_ORDER_WINDOW_DAYS = 30
+
+
+@app.get("/identity/questions")
+def identity_questions() -> dict[str, list[str]]:
+    return {"questions": get_onboarding_questions()}
+
+
+@app.post("/identity/{shop_id}")
+def create_identity(
+    shop_id: str,
+    request: IdentityRequest,
+    parent_backend: BasePointParentBackendClient = Depends(get_parent_backend),
+    model_client: ChatModelClient = Depends(get_identity_model_client),
+) -> dict[str, object]:
+    if request.answers is None and not is_existing_user(shop_id, parent_backend):
+        raise HTTPException(
+            status_code=422,
+            detail="Shop not found in the Parent Backend: send onboarding answers "
+            "(see GET /identity/questions).",
+        )
+
+    today = datetime.now(ZoneInfo("Africa/Nairobi")).date()
+    leveling_engine = BusinessLevelingEngine(model_client)
+    blueprint, level, goals = onboard_or_refresh_business(
+        shop_id,
+        parent_backend,
+        vector_store=None,
+        leveling_engine=leveling_engine,
+        goal_agent=leveling_engine,
+        model_client=model_client,
+        start_date=(today - timedelta(days=IDENTITY_ORDER_WINDOW_DAYS)).isoformat(),
+        end_date=today.isoformat(),
+        onboarding_answers=request.answers,
+    )
+    return build_user_response(blueprint, level, goals)

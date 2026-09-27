@@ -11,7 +11,7 @@ that same data.
 | Environment | Base URL |
 |---|---|
 | Docker (`docker compose up`) | `http://<host-ip>:8000` |
-| Local dev on the office LAN | `http://192.168.100.57:8001` (the host's IP can change; check `ipconfig`) |
+| Local dev on the office LAN | `http://192.168.100.37:8001` (the host's IP can change; check `ipconfig`) |
 
 A phone on the same Wi-Fi can reach the engine at the host's LAN IP. `localhost` won't
 work from a phone, and on the Android emulator the host machine is `http://10.0.2.2:<port>`.
@@ -153,6 +153,11 @@ which is useful as a test fixture for `fromJson`.
   hardcoded label list.
 - **Nullable fields.** Build the widget so these don't crash:
   - `alert`: `null` when nothing needs attention. Hide the alert banner.
+  - `watchedProduct`: `null` when the shop has too little sales history to pick a product.
+    Hide the watched-product card (or show an empty state like "Not enough sales yet").
+    `GET /watched-product` returns `null` too.
+  - `dailyObservation.performancePercent`: `null` when there's no earlier period to compare
+    against. Show `performanceNote` without the percentage.
   - `salesPerformance.stockPercent`: `null` when the shop has no stock-movement history yet.
     `stockNote` still explains why, so show the note and skip the percentage.
 - **Zeros are valid data.** A new shop, or one with no sales today, returns zero-filled
@@ -173,9 +178,12 @@ but don't rely on the choice persisting across reloads yet.
 
 ## 3. Chat
 
-The chat answers from the shop's live dashboard data, so it can say things like
-"your Morning Coffee stock (78 units) won't last past 10 AM tomorrow" instead of generic
-advice.
+The chat answers from the shop's live dashboard data **and its full POS inventory**
+(every item's quantity, selling price and supplier cost, from the Parent Backend's
+`/product-inventory`). It can say things like "your Morning Coffee stock (78 units) won't
+last past 10 AM tomorrow" or "Sugar 1kg and Bread are out of stock; reorder those first"
+instead of giving generic advice. Inventory needs the bearer token; without one, the chat only
+sees the demo dashboard.
 
 ### `POST /chat`
 
@@ -235,11 +243,15 @@ Errors come back as `{"detail": "<message>"}`.
 | `404` on a GET | The Parent Backend doesn't recognise the shop id | Check you're sending `shopId` from login, not a user id |
 | `404` on a POST | Stale insight or alert id | Refetch that section |
 | `400` on `/chat` | Unknown `provider` or no API key configured server-side | Report it; it's a config issue, not the user's fault |
-| `502` | The Parent Backend is down or returned an error; `detail` carries its status and message | Show "Couldn't load your data, pull to retry"; log `detail` for debugging |
+| `502` with `Unexpected Parent Backend data in: …` | The backend sent a field the engine doesn't expect (e.g. a new `null`); report it with the field name | "Couldn't load your data, pull to retry" |
+| `502` | The Parent Backend returned an unexpected 4xx (e.g. `400 Tenant code required`); `detail` carries its status and message | Show "Couldn't load your data, pull to retry"; log `detail` for debugging |
 | `500` on `/chat` | The AI model is unavailable after all fallbacks (usually a demand spike) | Show "The assistant is busy, try again in a moment" with a retry |
 
-If the Parent Backend fails during a **chat** request, the chat still answers, just without
-shop data. That case doesn't produce an error.
+**When the Parent Backend is down** (unreachable, timing out, or returning 5xx), the
+dashboard routes return `200` with the demo data (the "Silikhe's Shop" payload above)
+instead of an error, and the chat answers from that same demo data. That keeps demos
+working through a backend outage, but it means the app can't tell demo data from live
+data. The engine log shows `Parent Backend down, serving demo dashboard` when it happens.
 
 ## 5. Dart reference
 
@@ -264,7 +276,7 @@ class DukaApi {
     required this.shopId,
   });
 
-  final String baseUrl; // e.g. http://192.168.100.57:8001
+  final String baseUrl; // e.g. http://192.168.100.37:8001
   final String token;   // from Parent Backend POST /users/login
   final String companyCode; // the tenant code sent to /users/login
   final String shopId;  // `shopId` from the same login response

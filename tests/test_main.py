@@ -81,3 +81,21 @@ def test_dashboard_source_forwards_the_callers_company_code() -> None:
     )
     source = get_dashboard_data_source(request)
     assert source._parent_backend._client.headers["companycode"] == "co1"
+
+
+def test_unexpected_parent_backend_payload_returns_502_naming_the_field() -> None:
+    from ai_lining.dashboard import RealDashboardDataSource
+
+    class _BadPayloadBackend:
+        def get_dashboard(self, user_id: str) -> dict:
+            return {"header": {"shopName": "shop 1"}}
+
+    app.dependency_overrides[get_dashboard_data_source] = lambda: RealDashboardDataSource(
+        _BadPayloadBackend()
+    )
+    try:
+        response = client.get("/ai-lining/shop1/header")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 502
+    assert "header.role" in response.json()["detail"]
