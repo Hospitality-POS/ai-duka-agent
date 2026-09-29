@@ -6,13 +6,18 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from cryptography.hazmat.primitives import serialization
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
-from ai_lining.chat_context import build_chat_context
+from ai_lining.chat_context import (
+    DATE_RANGE_QUESTION,
+    build_chat_context,
+    date_range_from_prompt,
+    prompt_needs_date_range,
+)
 from ai_lining.dashboard import (
     DashboardDataSource,
     MockDashboardDataSource,
@@ -233,6 +238,11 @@ def chat(
     data_source: DashboardDataSource = Depends(get_dashboard_data_source),
     parent_backend: BasePointParentBackendClient | None = Depends(get_optional_parent_backend),
 ) -> dict[str, str]:
+    date_range = date_range_from_prompt(request.prompt)
+    agent_name = request.level if request.level in {"early_stage", "growth_stage", "mature_stage"} else "early_stage"
+    if prompt_needs_date_range(request.prompt) and date_range is None:
+        return {"agent": agent_name, "response": DATE_RANGE_QUESTION}
+
     try:
         model_client = create_model_client(request.provider, request.api_key, request.model)
     except ValueError as exc:
@@ -240,7 +250,12 @@ def chat(
 
     context = None
     if request.user_id:
-        context = build_chat_context(request.user_id, data_source, parent_backend)
+        context = build_chat_context(
+            request.user_id,
+            data_source,
+            parent_backend,
+            *(date_range or (None, None)),
+        )
 
     parent_agent = ParentAgent(build_stage_advisor_agents(model_client))
     response = parent_agent.handle(request.prompt, request.level, context)
@@ -249,9 +264,12 @@ def chat(
 
 @app.get("/ai-lining/{user_id}/dashboard")
 def get_ai_lining_dashboard(
-    user_id: str, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
+    user_id: str,
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
+    data_source: DashboardDataSource = Depends(get_dashboard_data_source),
 ) -> dict[str, object]:
-    dashboard = build_dashboard(user_id, data_source)
+    dashboard = build_dashboard(user_id, data_source, from_date, to_date)
     return dashboard.model_dump(by_alias=True)
 
 

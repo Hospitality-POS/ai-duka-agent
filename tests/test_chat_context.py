@@ -1,3 +1,5 @@
+from datetime import date
+
 import httpx
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
@@ -6,6 +8,8 @@ from ai_lining.chat_context import (
     build_chat_context,
     build_dashboard_context,
     build_inventory_context,
+    date_range_from_prompt,
+    prompt_needs_date_range,
 )
 from ai_lining.dashboard import MockDashboardDataSource
 
@@ -28,6 +32,25 @@ def test_dashboard_context_includes_shop_data_but_not_ui_fields() -> None:
     assert "Ksh 274,000" in context
     assert "quickPrompts" not in context
     assert "Start a Chat" not in context
+
+
+def test_date_range_from_prompt_extracts_explicit_dates() -> None:
+    assert date_range_from_prompt("Compare sales from 2026-09-01 to 2026-09-26") == (
+        "2026-09-01",
+        "2026-09-26",
+    )
+
+
+def test_date_range_from_prompt_extracts_relative_dates() -> None:
+    assert date_range_from_prompt("How were sales last month?", date(2026, 9, 29)) == (
+        "2026-08-01",
+        "2026-08-31",
+    )
+
+
+def test_date_sensitive_prompt_without_range_is_detected() -> None:
+    assert prompt_needs_date_range("How were my sales?")
+    assert not prompt_needs_date_range("How much stock do I have now?")
 
 
 def test_parent_agent_sends_context_before_user_question() -> None:

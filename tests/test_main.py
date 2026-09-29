@@ -35,6 +35,22 @@ def test_openrouter_setup_endpoint_requires_key() -> None:
     assert response.status_code == 400
 
 
+def test_chat_asks_for_date_range_for_unfiltered_sales_prompt() -> None:
+    response = client.post(
+        "/chat",
+        json={"prompt": "How were my sales?", "level": "growth_stage"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "agent": "growth_stage",
+        "response": (
+            "What date range should I use? Please give me dates like "
+            "`from 2026-09-01 to 2026-09-26`, or say `this week` or `last month`."
+        ),
+    }
+
+
 class _FailingDashboardSource:
     def __init__(self, status: int) -> None:
         self.status = status

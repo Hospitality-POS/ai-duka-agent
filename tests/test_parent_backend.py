@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -102,6 +104,21 @@ def test_get_dashboard_passes_shop_id() -> None:
     assert client.get_dashboard("shop1") == {"header": {"shopName": "shop 1"}}
 
 
+def test_get_dashboard_passes_date_range() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/biashara-ai/dashboard"
+        assert request.url.params["shop_id"] == "shop1"
+        assert request.url.params["from"] == "2026-09-01"
+        assert request.url.params["to"] == "2026-09-26"
+        return httpx.Response(200, json={"header": {"shopName": "shop 1"}})
+
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://t")
+    assert client.get_dashboard("shop1", "2026-09-01", "2026-09-26") == {
+        "header": {"shopName": "shop 1"}
+    }
+
+
 def test_list_locations_wraps_the_shop_record() -> None:
     client = _client_with_routes({"/shops/shop1": {"_id": "shop1", "name": "shop 1"}})
     assert client.list_locations("shop1") == [{"_id": "shop1", "name": "shop 1"}]
@@ -120,18 +137,6 @@ def test_list_invoices_unwraps_paginated_envelope() -> None:
     assert client.list_invoices("shop1") == [{"_id": "inv1"}]
 
 
-@pytest.mark.parametrize(
-    "method_name,args",
-    [
-        ("create_sale", ("shop1", {})),
-    ],
-)
-def test_unbacked_methods_raise_not_implemented(method_name: str, args: tuple) -> None:
-    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
-    with pytest.raises(NotImplementedError):
-        getattr(client, method_name)(*args)
-
-
 def test_get_inventory_filters_by_shop() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/product-inventory"
@@ -141,3 +146,70 @@ def test_get_inventory_filters_by_shop() -> None:
     client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
     client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://t")
     assert client.get_inventory("shop1") == [{"_id": "prod1", "quantity": 3}]
+
+
+def test_get_stock_at_passes_shop_and_date() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/product-inventory/stock-at"
+        assert request.url.params["shop_id"] == "shop1"
+        assert request.url.params["date"] == "2026-08-26"
+        return httpx.Response(200, json={"items": [], "totals": {}})
+
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://t")
+    assert client.get_stock_at("shop1", "2026-08-26") == {"items": [], "totals": {}}
+
+
+def test_create_sale_runs_cart_flow_and_returns_order() -> None:
+    requests: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        if request.url.path == "/cart/create-cart":
+            return httpx.Response(200, json={"cart": {"_id": "cart1"}})
+        if request.url.path == "/cart/add-item-to-cart":
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(200, json={"_id": "order1", "status": "paid"})
+
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://t")
+    sale = client.create_sale(
+        "shop1",
+        {
+            "table_id": "table1",
+            "created_by": "user1",
+            "method_id": "cash",
+            "updated_by": "user1",
+            "items": [
+                {"product_id": "prod1", "product_type": "stock", "quantity": 2, "price": 500}
+            ],
+        },
+    )
+
+    assert sale == {"_id": "order1", "status": "paid"}
+    assert requests == [
+        (
+            "/cart/create-cart",
+            {"table_id": "table1", "created_by": "user1", "shop_id": "shop1"},
+        ),
+        (
+            "/cart/add-item-to-cart",
+            {
+                "cart_id": "cart1",
+                "product_id": "prod1",
+                "product_type": "stock",
+                "quantity": 2,
+                "price": 500,
+            },
+        ),
+        (
+            "/orders/create",
+            {
+                "method_id": "cash",
+                "updated_by": "user1",
+                "cart_id": "cart1",
+                "shop_id": "shop1",
+            },
+        ),
+    ]

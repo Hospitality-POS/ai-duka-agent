@@ -9,8 +9,7 @@ https://api.hospitality.reliatech.co.ke on 2026-09-23: `/product-inventory` item
 when there are results but a `{"data": [...]}` envelope on an empty result (see
 `_list_body`). `get_dashboard`, `list_locations`, and `list_invoices` follow the Parent
 Backend team's answers in `docs/parent_backend_api_responses.md`. `get_day_summary` has no
-endpoint yet and returns an empty summary; `create_sale` is not wired up and raises
-NotImplementedError.
+endpoint yet and returns an empty summary.
 """
 
 from __future__ import annotations
@@ -120,9 +119,16 @@ class BasePointParentBackendClient:
             )
         return procurement
 
-    def get_dashboard(self, user_id: str) -> dict:
+    def get_dashboard(
+        self, user_id: str, from_date: str | None = None, to_date: str | None = None
+    ) -> dict:
         """Fetch a shop's full AI Lining dashboard, computed by the Parent Backend from live data."""
-        response = self._client.get("/biashara-ai/dashboard", params={"shop_id": user_id})
+        params = {"shop_id": user_id}
+        if from_date is not None:
+            params["from"] = from_date
+        if to_date is not None:
+            params["to"] = to_date
+        response = self._client.get("/biashara-ai/dashboard", params=params)
         response.raise_for_status()
         return response.json()
 
@@ -131,6 +137,15 @@ class BasePointParentBackendClient:
         response = self._client.get("/product-inventory", params={"shop_id": user_id})
         response.raise_for_status()
         return _list_body(response)
+
+    def get_stock_at(self, user_id: str, date: str | None = None) -> dict:
+        """Fetch the shop's historical stock snapshot and current totals."""
+        params = {"shop_id": user_id}
+        if date is not None:
+            params["date"] = date
+        response = self._client.get("/product-inventory/stock-at", params=params)
+        response.raise_for_status()
+        return response.json()
 
     def list_locations(self, user_id: str) -> list[dict]:
         """Fetch the shop's own record as a one-item list, or an empty list if it doesn't exist."""
@@ -153,5 +168,33 @@ class BasePointParentBackendClient:
         return {}
 
     def create_sale(self, user_id: str, cart_payload: dict) -> dict:
-        """Raise: the cart -> `POST /orders/create` checkout flow is not wired up yet."""
-        raise NotImplementedError("create_sale (cart -> /orders/create) is not wired up yet.")
+        """Create a cart, add its items, and finalize it as an order."""
+        items = cart_payload.get("items", [])
+        cart_request = {
+            key: cart_payload[key]
+            for key in ("table_id", "shop_id", "created_by")
+            if key in cart_payload
+        }
+        cart_request.setdefault("shop_id", user_id)
+        cart_response = self._client.post("/cart/create-cart", json=cart_request)
+        cart_response.raise_for_status()
+        cart_body = cart_response.json()
+        cart = cart_body.get("cart", cart_body) if isinstance(cart_body, dict) else {}
+        cart_id = cart.get("_id") or cart.get("id")
+        if not cart_id:
+            raise ValueError("Parent Backend create-cart response did not include a cart id.")
+
+        for item in items:
+            item_request = {"cart_id": cart_id, **item}
+            item_response = self._client.post("/cart/add-item-to-cart", json=item_request)
+            item_response.raise_for_status()
+
+        order_request = {
+            key: cart_payload[key]
+            for key in ("method_id", "shop_id", "updated_by", "payment_splits")
+            if key in cart_payload
+        }
+        order_request.update({"cart_id": cart_id, "shop_id": order_request.get("shop_id", user_id)})
+        order_response = self._client.post("/orders/create", json=order_request)
+        order_response.raise_for_status()
+        return order_response.json()

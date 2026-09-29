@@ -33,15 +33,15 @@ logger = logging.getLogger(__name__)
 class DashboardDataSource(Protocol):
     """Read access to the Parent Backend Engine's AI Lining dashboard data."""
 
-    def get_header(self, user_id: str) -> Header: ...
-    def get_daily_observation(self, user_id: str) -> DailyObservation: ...
-    def get_watched_product(self, user_id: str) -> WatchedProduct | None: ...
-    def get_alert(self, user_id: str) -> Alert | None: ...
-    def get_whats_happening(self, user_id: str) -> WhatsHappening: ...
-    def get_insights(self, user_id: str) -> list[Insight]: ...
-    def get_sales_performance(self, user_id: str) -> SalesPerformance: ...
-    def get_my_stock(self, user_id: str) -> MyStock: ...
-    def get_chat_card(self, user_id: str) -> ChatCard: ...
+    def get_header(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> Header: ...
+    def get_daily_observation(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> DailyObservation: ...
+    def get_watched_product(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> WatchedProduct | None: ...
+    def get_alert(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> Alert | None: ...
+    def get_whats_happening(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> WhatsHappening: ...
+    def get_insights(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> list[Insight]: ...
+    def get_sales_performance(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> SalesPerformance: ...
+    def get_my_stock(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> MyStock: ...
+    def get_chat_card(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> ChatCard: ...
     def apply_insight(self, user_id: str, insight_id: str) -> bool: ...
     def record_alert_action(self, user_id: str, alert_id: str) -> bool: ...
 
@@ -49,11 +49,11 @@ class DashboardDataSource(Protocol):
 class MockDashboardDataSource:
     """A `DashboardDataSource` backed by static example data before the real integration exists."""
 
-    def get_header(self, user_id: str) -> Header:
+    def get_header(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> Header:
         """Return a placeholder header for `user_id`."""
         return Header(shop_name="Silikhe's Shop", role="Store Manager", ai_health="87%")
 
-    def get_daily_observation(self, user_id: str) -> DailyObservation:
+    def get_daily_observation(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> DailyObservation:
         """Return a placeholder hourly-sales observation for `user_id`."""
         return DailyObservation(
             hourly_sales=[4200, 3800, 5200, 4600, 6100, 5400, 9000, 5800, 4900, 6300, 5100, 4400],
@@ -69,7 +69,7 @@ class MockDashboardDataSource:
             ],
         )
 
-    def get_watched_product(self, user_id: str) -> WatchedProduct:
+    def get_watched_product(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> WatchedProduct:
         """Return a placeholder watched-product card for `user_id`."""
         return WatchedProduct(
             amount="Ksh 1250",
@@ -86,7 +86,7 @@ class MockDashboardDataSource:
             ],
         )
 
-    def get_alert(self, user_id: str) -> Alert | None:
+    def get_alert(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> Alert | None:
         """Return the active low-stock alert for `user_id`, or None if there isn't one."""
         return Alert(
             id="low_stock_morning_coffee",
@@ -95,7 +95,7 @@ class MockDashboardDataSource:
             action_label="See what to do",
         )
 
-    def get_whats_happening(self, user_id: str) -> WhatsHappening:
+    def get_whats_happening(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> WhatsHappening:
         """Return a placeholder explanation card for `user_id`."""
         return WhatsHappening(
             observation="More Customers Are Buying Coffee During The Morning Rush.",
@@ -108,7 +108,7 @@ class MockDashboardDataSource:
             stock_status="Low Stock",
         )
 
-    def get_insights(self, user_id: str) -> list[Insight]:
+    def get_insights(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> list[Insight]:
         """Return placeholder insights for `user_id`."""
         return [
             Insight(
@@ -134,7 +134,7 @@ class MockDashboardDataSource:
             ),
         ]
 
-    def get_sales_performance(self, user_id: str) -> SalesPerformance:
+    def get_sales_performance(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> SalesPerformance:
         """Return a placeholder monthly-sales performance card for `user_id`."""
         return SalesPerformance(
             monthly_sales=[3.2, 4.6, 3.4, 5.2, 4.0, 3.0, 4.2, 5.4, 4.8, 3.6, 4.4, 5.0],
@@ -156,7 +156,7 @@ class MockDashboardDataSource:
             ],
         )
 
-    def get_my_stock(self, user_id: str) -> MyStock:
+    def get_my_stock(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> MyStock:
         """Return a placeholder stock-capital card for `user_id`."""
         return MyStock(
             capital_label="Total Capital",
@@ -169,7 +169,7 @@ class MockDashboardDataSource:
             ],
         )
 
-    def get_chat_card(self, user_id: str) -> ChatCard:
+    def get_chat_card(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> ChatCard:
         """Return the chat entry-point card."""
         return ChatCard(title="Start a Chat", subtitle="Real-time chatting with business analytics")
 
@@ -194,12 +194,18 @@ class RealDashboardDataSource(MockDashboardDataSource):
 
     def __init__(self, parent_backend: BasePointParentBackendClient) -> None:
         self._parent_backend = parent_backend
-        self._dashboards: dict[str, AiLiningDashboard] = {}
+        self._dashboards: dict[tuple[str, str | None, str | None], AiLiningDashboard] = {}
 
-    def _dashboard(self, user_id: str) -> AiLiningDashboard:
-        if user_id not in self._dashboards:
+    def _dashboard(
+        self, user_id: str, from_date: str | None = None, to_date: str | None = None
+    ) -> AiLiningDashboard:
+        cache_key = (user_id, from_date, to_date)
+        if cache_key not in self._dashboards:
             try:
-                payload = self._parent_backend.get_dashboard(user_id)
+                if from_date is None and to_date is None:
+                    payload = self._parent_backend.get_dashboard(user_id)
+                else:
+                    payload = self._parent_backend.get_dashboard(user_id, from_date, to_date)
                 try:
                     dashboard = AiLiningDashboard.model_validate(payload)
                 except ValidationError:
@@ -212,59 +218,64 @@ class RealDashboardDataSource(MockDashboardDataSource):
                 if is_client_error:
                     raise
                 logger.warning("Parent Backend down, serving demo dashboard: %r", exc)
-                dashboard = build_dashboard(user_id, MockDashboardDataSource())
-            self._dashboards[user_id] = dashboard
-        return self._dashboards[user_id]
+                dashboard = build_dashboard(user_id, MockDashboardDataSource(), from_date, to_date)
+            self._dashboards[cache_key] = dashboard
+        return self._dashboards[cache_key]
 
-    def get_header(self, user_id: str) -> Header:
+    def get_header(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> Header:
         """Return the shop name, the user's role, and the backend-computed AI health."""
-        return self._dashboard(user_id).header
+        return self._dashboard(user_id, from_date, to_date).header
 
-    def get_daily_observation(self, user_id: str) -> DailyObservation:
+    def get_daily_observation(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> DailyObservation:
         """Return today's hourly sales and peak window."""
-        return self._dashboard(user_id).daily_observation
+        return self._dashboard(user_id, from_date, to_date).daily_observation
 
-    def get_watched_product(self, user_id: str) -> WatchedProduct | None:
+    def get_watched_product(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> WatchedProduct | None:
         """Return the highest-velocity product, or None if the shop has too little sales data."""
-        return self._dashboard(user_id).watched_product
+        return self._dashboard(user_id, from_date, to_date).watched_product
 
-    def get_alert(self, user_id: str) -> Alert | None:
+    def get_alert(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> Alert | None:
         """Return the active low-stock alert, or None if there isn't one."""
-        return self._dashboard(user_id).alert
+        return self._dashboard(user_id, from_date, to_date).alert
 
-    def get_whats_happening(self, user_id: str) -> WhatsHappening:
+    def get_whats_happening(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> WhatsHappening:
         """Return the plain-language observation and its stock impact."""
-        return self._dashboard(user_id).whats_happening
+        return self._dashboard(user_id, from_date, to_date).whats_happening
 
-    def get_insights(self, user_id: str) -> list[Insight]:
+    def get_insights(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> list[Insight]:
         """Return the shop's current insights."""
-        return self._dashboard(user_id).insights
+        return self._dashboard(user_id, from_date, to_date).insights
 
-    def get_sales_performance(self, user_id: str) -> SalesPerformance:
+    def get_sales_performance(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> SalesPerformance:
         """Return monthly sales and the stock change against last month."""
-        return self._dashboard(user_id).sales_performance
+        return self._dashboard(user_id, from_date, to_date).sales_performance
 
-    def get_my_stock(self, user_id: str) -> MyStock:
+    def get_my_stock(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> MyStock:
         """Return total stock capital (quantity x supplier_price over active items)."""
-        return self._dashboard(user_id).my_stock
+        return self._dashboard(user_id, from_date, to_date).my_stock
 
-    def get_chat_card(self, user_id: str) -> ChatCard:
+    def get_chat_card(self, user_id: str, from_date: str | None = None, to_date: str | None = None) -> ChatCard:
         """Return the chat entry-point card."""
-        return self._dashboard(user_id).chat
+        return self._dashboard(user_id, from_date, to_date).chat
 
 
-def build_dashboard(user_id: str, data_source: DashboardDataSource) -> AiLiningDashboard:
+def build_dashboard(
+    user_id: str,
+    data_source: DashboardDataSource,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> AiLiningDashboard:
     """Assemble the full AI Lining dashboard for `user_id` from `data_source`."""
     return AiLiningDashboard(
-        header=data_source.get_header(user_id),
-        daily_observation=data_source.get_daily_observation(user_id),
-        watched_product=data_source.get_watched_product(user_id),
-        alert=data_source.get_alert(user_id),
-        whats_happening=data_source.get_whats_happening(user_id),
-        insights=data_source.get_insights(user_id),
-        sales_performance=data_source.get_sales_performance(user_id),
-        my_stock=data_source.get_my_stock(user_id),
-        chat=data_source.get_chat_card(user_id),
+        header=data_source.get_header(user_id, from_date, to_date),
+        daily_observation=data_source.get_daily_observation(user_id, from_date, to_date),
+        watched_product=data_source.get_watched_product(user_id, from_date, to_date),
+        alert=data_source.get_alert(user_id, from_date, to_date),
+        whats_happening=data_source.get_whats_happening(user_id, from_date, to_date),
+        insights=data_source.get_insights(user_id, from_date, to_date),
+        sales_performance=data_source.get_sales_performance(user_id, from_date, to_date),
+        my_stock=data_source.get_my_stock(user_id, from_date, to_date),
+        chat=data_source.get_chat_card(user_id, from_date, to_date),
     )
 
 

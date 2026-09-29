@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from datetime import date, timedelta
 
 import httpx
 
@@ -11,6 +13,68 @@ from ai_lining.dashboard import DashboardDataSource, build_dashboard
 from setup.parent_backend import BasePointParentBackendClient
 
 logger = logging.getLogger(__name__)
+
+DATE_RANGE_QUESTION = (
+    "What date range should I use? Please give me dates like "
+    "`from 2026-09-01 to 2026-09-26`, or say `this week` or `last month`."
+)
+
+_DATE_SENSITIVE_TERMS = (
+    "sales",
+    "sold",
+    "sell",
+    "selling",
+    "revenue",
+    "orders",
+    "performance",
+    "trend",
+    "compare",
+    "growth",
+    "historical",
+)
+_ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def date_range_from_prompt(prompt: str, today: date | None = None) -> tuple[str, str] | None:
+    """Extract an explicit or common relative date range from a user prompt."""
+    current = today or date.today()
+    dates = []
+    for value in _ISO_DATE.findall(prompt):
+        try:
+            dates.append(date.fromisoformat(value))
+        except ValueError:
+            continue
+    if len(dates) >= 2:
+        start, end = dates[:2]
+        return (start.isoformat(), end.isoformat()) if start <= end else None
+
+    normalized = prompt.lower()
+    if "yesterday" in normalized:
+        value = current - timedelta(days=1)
+        return value.isoformat(), value.isoformat()
+    if "today" in normalized:
+        value = current
+        return value.isoformat(), value.isoformat()
+    if "last week" in normalized:
+        start = current - timedelta(days=current.weekday() + 7)
+        return start.isoformat(), (start + timedelta(days=6)).isoformat()
+    if "this week" in normalized:
+        start = current - timedelta(days=current.weekday())
+        return start.isoformat(), current.isoformat()
+    if "last month" in normalized:
+        first_of_current_month = current.replace(day=1)
+        end = first_of_current_month - timedelta(days=1)
+        start = end.replace(day=1)
+        return start.isoformat(), end.isoformat()
+    if "this month" in normalized:
+        return current.replace(day=1).isoformat(), current.isoformat()
+    return None
+
+
+def prompt_needs_date_range(prompt: str) -> bool:
+    """Return whether a prompt asks for time-dependent business data."""
+    normalized = prompt.lower()
+    return any(term in normalized for term in _DATE_SENSITIVE_TERMS)
 
 # UI-only fields: the chat card and the canned quick-prompt buttons tell the model nothing.
 _UI_ONLY_FIELDS = {
@@ -30,15 +94,25 @@ DASHBOARD_CONTEXT_INSTRUCTION = (
 )
 
 
-def build_dashboard_context(user_id: str, data_source: DashboardDataSource) -> str | None:
+def build_dashboard_context(
+    user_id: str,
+    data_source: DashboardDataSource,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> str | None:
     """Return `user_id`'s dashboard data as a prompt section, or None if it can't be loaded."""
     try:
-        dashboard = build_dashboard(user_id, data_source)
+        dashboard = build_dashboard(user_id, data_source, from_date, to_date)
     except Exception as exc:  # pragma: no cover - defensive branch
         logger.warning("Dashboard data unavailable for %r; chatting without it: %s", user_id, exc)
         return None
     data = dashboard.model_dump(by_alias=True, exclude=_UI_ONLY_FIELDS)
-    return f"{DASHBOARD_CONTEXT_INSTRUCTION}\n\n{json.dumps(data, indent=2)}"
+    date_note = (
+        f"The dashboard covers {from_date} through {to_date}."
+        if from_date and to_date
+        else "The dashboard uses the backend's default current range."
+    )
+    return f"{DASHBOARD_CONTEXT_INSTRUCTION} {date_note}\n\n{json.dumps(data, indent=2)}"
 
 
 # Keeps the prompt bounded for large catalogs; lowest-stock items are listed first, so the
@@ -110,9 +184,11 @@ def build_chat_context(
     user_id: str,
     data_source: DashboardDataSource,
     parent_backend: BasePointParentBackendClient | None,
+    from_date: str | None = None,
+    to_date: str | None = None,
 ) -> str | None:
     """Combine the shop's dashboard and (with a backend client) inventory into chat context."""
-    sections = [build_dashboard_context(user_id, data_source)]
+    sections = [build_dashboard_context(user_id, data_source, from_date, to_date)]
     if parent_backend is not None:
         sections.append(build_inventory_context(user_id, parent_backend))
     return "\n\n".join(section for section in sections if section) or None
