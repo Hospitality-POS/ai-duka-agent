@@ -26,7 +26,7 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 GEMINI_FALLBACK_MODELS = [
     m.strip()
     for m in os.getenv(
-        "GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.8-flash,gemini-2.5-flash"
+        "GEMINI_FALLBACK_MODELS", "gemini-3.8-flash,gemini-3.7-flash,gemini-3.1-flash-lite"
     ).split(",")
     if m.strip()
 ]
@@ -117,8 +117,8 @@ class GeminiChatClient:
                     return response.text
                 logger.warning("Gemini model %r returned no text; trying next fallback.", model)
             except (ServerError, ClientError) as exc:  # pragma: no cover - defensive branch
-                if isinstance(exc, ClientError) and exc.code != 429:
-                    raise  # not a per-model overload/quota issue; another model won't help
+                if isinstance(exc, ClientError) and exc.code not in (404, 429, 503):
+                    raise  # not a per-model availability/quota issue; re-raise
                 logger.warning("Gemini model %r unavailable, trying next fallback: %s", model, exc)
                 last_error = exc
         if last_error is not None:
