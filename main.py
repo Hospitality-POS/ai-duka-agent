@@ -1,7 +1,13 @@
 import base64
+from dotenv import load_dotenv
 
+load_dotenv()
+
+import edge_tts
 from cryptography.hazmat.primitives import serialization
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from agents.parent_agent import ParentAgent, build_stage_advisor_agents
@@ -34,6 +40,14 @@ from setup.parent_backend import BasePointParentBackendClient
 
 app = FastAPI(title="Duka AI Engine")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 def _bearer_token(request: Request) -> str | None:
     """Extract the caller's own Parent Backend token from an `Authorization: Bearer` header."""
@@ -56,12 +70,16 @@ def get_dashboard_data_source(request: Request) -> DashboardDataSource:
     """Build a `DashboardDataSource` authenticated with the caller's own bearer token.
 
     Auth sessions are the frontend's job: each request supplies its own Parent Backend
-    token, so no server-side credential is stored or shared across users.
+    token and company code, so no server-side credential is stored or shared across users.
     """
     token = _bearer_token(request)
+    company_code = request.headers.get("companycode")
     if not token or _insight_model_client is None:
         return MockDashboardDataSource()
-    return RealDashboardDataSource(BasePointParentBackendClient(api_key=token), _insight_model_client)
+    return RealDashboardDataSource(
+        BasePointParentBackendClient(api_key=token, company_code=company_code),
+        _insight_model_client,
+    )
 
 
 class OpenRouterRequest(BaseModel):
@@ -88,6 +106,46 @@ class RSAEncryptRequest(BaseModel):
 class RSADecryptRequest(BaseModel):
     data: str
     private_key_pem: str
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str | None = "en-KE-AsiliaNeural"
+
+
+@app.post("/tts")
+async def generate_speech(req: TTSRequest):
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    cleaned = (
+        req.text.replace("*", "")
+        .replace("#", "")
+        .replace("`", "")
+        .strip()
+    )
+    if len(cleaned) > 4000:
+        cleaned = cleaned[:4000]
+
+    voice = req.voice or "en-KE-AsiliaNeural"
+    try:
+        communicate = edge_tts.Communicate(cleaned, voice)
+        audio_bytes = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_bytes += chunk["data"]
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except Exception as e:
+        # Fallback to JennyNeural if Kenyan voice fails
+        try:
+            communicate = edge_tts.Communicate(cleaned, "en-US-JennyNeural")
+            audio_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes += chunk["data"]
+            return Response(content=audio_bytes, media_type="audio/mpeg")
+        except Exception as inner_e:
+            raise HTTPException(status_code=500, detail=f"TTS synthesis error: {inner_e}")
 
 
 @app.get("/")
@@ -164,9 +222,12 @@ def chat(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    parent_agent = ParentAgent(build_stage_advisor_agents(model_client))
-    response = parent_agent.handle(request.prompt, request.level)
-    return {"agent": parent_agent.pick_agent(request.level).name, "response": response}
+    try:
+        parent_agent = ParentAgent(build_stage_advisor_agents(model_client))
+        response = parent_agent.handle(request.prompt, request.level)
+        return {"agent": parent_agent.pick_agent(request.level).name, "response": response}
+    except Exception as exc:  # pragma: no cover - defensive branch
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/ai-lining/{user_id}/dashboard")
