@@ -1,4 +1,5 @@
 import base64
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -135,7 +136,7 @@ async def generate_speech(req: TTSRequest):
             if chunk["type"] == "audio":
                 audio_bytes += chunk["data"]
         return Response(content=audio_bytes, media_type="audio/mpeg")
-    except Exception as e:
+    except Exception:
         # Fallback to JennyNeural if Kenyan voice fails
         try:
             communicate = edge_tts.Communicate(cleaned, "en-US-JennyNeural")
