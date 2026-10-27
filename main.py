@@ -56,6 +56,17 @@ def _bearer_token(request: Request) -> str | None:
     return token if scheme.lower() == "bearer" and token else None
 
 
+def require_authenticated_caller(request: Request) -> None:
+    """Reject requests whose bearer token the Parent Backend does not accept."""
+    token = _bearer_token(request)
+    company_code = request.headers.get("companycode")
+    if not token or not company_code:
+        raise HTTPException(status_code=401, detail="Missing bearer token or companycode header.")
+    client = BasePointParentBackendClient(api_key=token, company_code=company_code)
+    if not client.verify_token():
+        raise HTTPException(status_code=401, detail="Invalid or expired bearer token.")
+
+
 def _build_insight_model_client() -> ChatModelClient | None:
     """Build the Gemini model client AI Lining uses to generate insights, once, at startup."""
     try:
@@ -85,7 +96,6 @@ def get_dashboard_data_source(request: Request) -> DashboardDataSource:
 
 class OpenRouterRequest(BaseModel):
     api_key: str | None = None
-    env_var_name: str = "OPENROUTER_API_KEY"
 
 
 class ChatRequest(BaseModel):
@@ -200,15 +210,15 @@ def decrypt_rsa_payload(request: RSADecryptRequest) -> dict[str, str]:
     return {"data": decrypted}
 
 
-@app.post("/setup/openrouter")
+@app.post("/setup/openrouter", dependencies=[Depends(require_authenticated_caller)])
 def openrouter_setup(request: OpenRouterRequest) -> dict[str, object]:
-    success, message = setup_openrouter(request.api_key, request.env_var_name)
+    success, message = setup_openrouter(request.api_key)
     if not success:
         raise HTTPException(status_code=400, detail=message)
     return {"success": True, "message": message}
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(require_authenticated_caller)])
 def chat(
     request: ChatRequest, data_source: DashboardDataSource = Depends(get_dashboard_data_source)
 ) -> dict[str, str]:

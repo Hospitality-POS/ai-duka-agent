@@ -104,3 +104,20 @@ def test_unbacked_methods_raise_not_implemented(method_name: str, args: tuple) -
     client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
     with pytest.raises(NotImplementedError):
         getattr(client, method_name)(*args)
+
+
+@pytest.mark.parametrize("status_code,expected", [(200, True), (401, False), (400, False)])
+def test_verify_token_checks_parent_backend_auth(status_code: int, expected: bool) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/biashara-ai/permissions"
+        assert request.headers["companycode"] == "co1"
+        assert request.headers["Authorization"] == "Bearer tok1"
+        return httpx.Response(status_code, json={})
+
+    client = BasePointParentBackendClient(company_code="co1", api_key="tok1")
+    client._client = httpx.Client(
+        base_url=client._client.base_url,
+        headers=client._client.headers,
+        transport=httpx.MockTransport(handler),
+    )
+    assert client.verify_token() is expected
