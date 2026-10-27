@@ -5,6 +5,7 @@ parent agent's stage-routing decision (`ParentAgent.pick_agent`, see
 `agents/parent_agent.py`). Opt-in only, since each scenario makes a real, billed
 API call: set RUN_LIVE_CHAT_TESTS=1 and have the target server running with a
 GEMINI_API_KEY configured. Point at a non-default server with CHAT_TEST_BASE_URL.
+`/chat` requires a Parent Backend login: set CHAT_TEST_TOKEN and CHAT_TEST_COMPANY_CODE.
 """
 
 import os
@@ -13,6 +14,10 @@ import httpx
 import pytest
 
 BASE_URL = os.getenv("CHAT_TEST_BASE_URL", "http://localhost:8000")
+AUTH_HEADERS = {
+    "Authorization": f"Bearer {os.getenv('CHAT_TEST_TOKEN', '')}",
+    "companycode": os.getenv("CHAT_TEST_COMPANY_CODE", ""),
+}
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_LIVE_CHAT_TESTS") != "1",
@@ -105,7 +110,7 @@ EXPECTED_AGENT_FOR_LEVEL = {
 def test_chat_scenario(prompt: str, level: str | None) -> None:
     """Send a real prompt through /chat and check the model responds and routing is correct."""
     payload = {"prompt": prompt, "level": level, "provider": "gemini"}
-    response = httpx.post(f"{BASE_URL}/chat", json=payload, timeout=60)
+    response = httpx.post(f"{BASE_URL}/chat", json=payload, headers=AUTH_HEADERS, timeout=60)
 
     assert response.status_code == 200, response.text
     body = response.json()

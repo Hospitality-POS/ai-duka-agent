@@ -21,6 +21,8 @@ import httpx
 PARENT_BACKEND_BASE_URL = os.getenv(
     "PARENT_BACKEND_BASE_URL", "https://api.hospitality.reliatech.co.ke"
 )
+# A cheap Parent Backend route guarded by its JWT `verifyToken` middleware.
+TOKEN_VERIFICATION_PATH = "/biashara-ai/permissions"
 
 
 def _list_body(response: httpx.Response) -> list[dict]:
@@ -44,6 +46,13 @@ class BasePointParentBackendClient:
             base_url=base_url,
             headers={"companycode": company_code, "Authorization": f"Bearer {api_key}"},
         )
+
+    def verify_token(self) -> bool:
+        """Return whether the Parent Backend accepts this client's bearer token and company code."""
+        try:
+            return self._client.get(TOKEN_VERIFICATION_PATH).status_code == 200
+        except httpx.HTTPError:  # pragma: no cover - defensive branch
+            return False
 
     def get_catalog(self, user_id: str) -> list[dict]:
         """Fetch the product catalog grouped by category, merged with each product's stock unit."""

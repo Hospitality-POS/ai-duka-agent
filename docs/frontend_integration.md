@@ -6,8 +6,12 @@ this doc covers the rest of the API and links out to that one.
 
 ## Base URL
 
-Local dev: `http://localhost:8000` (`uvicorn main:app --reload`). No auth is enforced yet —
-routes take `user_id` or an API key directly in the request body/path.
+Local dev: `http://localhost:8000` (`uvicorn main:app --reload`).
+
+`/chat` and `/setup/openrouter` require the caller's own Parent Backend login: send
+`Authorization: Bearer <token>` and `companycode: <code>` headers. The token is checked
+against the Parent Backend (`GET /biashara-ai/permissions`) before any model call; a
+missing, invalid, or expired token returns 401.
 
 ## Error handling
 
@@ -77,12 +81,12 @@ is for small payloads (tokens, short identifiers), not documents.
 ### `POST /setup/openrouter`
 
 ```json
-{ "api_key": "sk-or-...", "env_var_name": "OPENROUTER_API_KEY" }
+{ "api_key": "sk-or-..." }
 ```
 
-Both fields are optional — omit `api_key` to validate whatever's already in the named env
-var server-side. Returns 200 with `{"success": true, "message": "..."}`, or 400 with the
-failure reason if the key is missing/invalid.
+`api_key` is optional — omit it to validate the server's `OPENROUTER_API_KEY`. Returns 200
+with `{"success": true, "message": "..."}`, or 400 with the failure reason if the key is
+missing/invalid.
 
 ### `POST /chat`
 
@@ -105,7 +109,7 @@ answers (see `src/agents/parent_agent.py`); omit it to let the parent agent pick
 { "agent": "early-stage-advisor", "response": "..." }
 ```
 
-400 if the provider is unknown or no API key is available.
+400 if the provider is unknown or no API key is available; 401 without valid auth headers.
 
 ## Suggested client flow
 
